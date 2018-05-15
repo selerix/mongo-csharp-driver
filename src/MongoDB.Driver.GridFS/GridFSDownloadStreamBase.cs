@@ -91,12 +91,13 @@ namespace MongoDB.Driver.GridFS
 
         public override void Flush()
         {
-            throw new NotSupportedException();
+            //throw new NotSupportedException();
         }
 
         public override Task FlushAsync(CancellationToken cancellationToken)
         {
-            throw new NotSupportedException();
+            //throw new NotSupportedException();
+            return Task.FromResult(true);
         }
 
         public override void SetLength(long value)
