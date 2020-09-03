@@ -14,7 +14,6 @@
 */
 
 using System.Linq;
-using System.Threading.Tasks;
 using FluentAssertions;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Misc;
@@ -25,7 +24,7 @@ namespace MongoDB.Driver.Tests.Specifications.crud
     {
         private BsonDocument _filter;
         private BsonDocument _replacement;
-        private UpdateOptions _options = new UpdateOptions();
+        private ReplaceOptions _options = new ReplaceOptions();
 
         protected override bool TrySetArgument(string name, BsonValue value)
         {
@@ -61,7 +60,7 @@ namespace MongoDB.Driver.Tests.Specifications.crud
             return new ReplaceOneResult.Acknowledged(expectedResult["matchedCount"].ToInt64(), modifiedCount, upsertedId);
         }
 
-        protected override ReplaceOneResult ExecuteAndGetResult(IMongoCollection<BsonDocument> collection, bool async)
+        protected override ReplaceOneResult ExecuteAndGetResult(IMongoDatabase database, IMongoCollection<BsonDocument> collection, bool async)
         {
             if (async)
             {

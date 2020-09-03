@@ -14,36 +14,29 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using FluentAssertions;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Serializers;
-using MongoDB.Driver.Core.Authentication;
 using MongoDB.Driver.Core.Clusters;
-using MongoDB.Driver.Core.Configuration;
-using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Servers;
 using MongoDB.Driver.Core.Helpers;
 using Xunit;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
+using MongoDB.Driver.Core.Compression;
+using MongoDB.Driver.Core.Configuration;
 
 namespace MongoDB.Driver.Core.Connections
 {
     public class ConnectionInitializerTests
     {
         private static readonly ServerId __serverId = new ServerId(new ClusterId(), new DnsEndPoint("localhost", 27017));
-        private ConnectionInitializer _subject;
+        private readonly ConnectionInitializer _subject;
 
         public ConnectionInitializerTests()
         {
-            _subject = new ConnectionInitializer("test");
+            _subject = new ConnectionInitializer("test", new [] { new CompressorConfiguration(CompressorType.Zlib) });
         }
 
         [Theory]
@@ -67,12 +60,10 @@ namespace MongoDB.Driver.Core.Connections
 
         [Theory]
         [ParameterAttributeData]
-        public void InitializeConnectionA_should_build_the_ConnectionDescription_correctly(
-            [Values(false, true)]
-            bool async)
+        public void InitializeConnectionA_should_build_the_ConnectionDescription_correctly([Values(false, true)] bool async)
         {
             var isMasterReply = MessageHelper.BuildReply<RawBsonDocument>(
-                RawBsonDocumentHelper.FromJson("{ ok: 1 }"));
+                RawBsonDocumentHelper.FromJson("{ ok: 1, compression: ['zlib'] }"));
             var buildInfoReply = MessageHelper.BuildReply<RawBsonDocument>(
                 RawBsonDocumentHelper.FromJson("{ ok: 1, version: \"2.6.3\" }"));
             var gleReply = MessageHelper.BuildReply<RawBsonDocument>(
@@ -95,41 +86,8 @@ namespace MongoDB.Driver.Core.Connections
 
             result.ServerVersion.Should().Be(new SemanticVersion(2, 6, 3));
             result.ConnectionId.ServerValue.Should().Be(10);
-        }
-
-        [Fact]
-        public void CreateIsMasterCommand_should_return_expected_result()
-        {
-            var result = _subject.CreateIsMasterCommand();
-
-            var names = result.Names.ToList();
-            names.Count.Should().Be(2);
-            names[0].Should().Be("isMaster");
-            names[1].Should().Be("client");
-            result[0].Should().Be(1);
-            var clientDocument = result[1].AsBsonDocument;
-            var clientDocumentNames = clientDocument.Names.ToList();
-            clientDocumentNames.Count.Should().Be(4);
-            clientDocumentNames[0].Should().Be("application");
-            clientDocumentNames[1].Should().Be("driver");
-            clientDocumentNames[2].Should().Be("os");
-            clientDocumentNames[3].Should().Be("platform");
-            clientDocument["application"]["name"].AsString.Should().Be("test");
-            clientDocument["driver"]["name"].AsString.Should().Be("mongo-csharp-driver");
-            clientDocument["driver"]["version"].BsonType.Should().Be(BsonType.String);
-        }
-
-        [Theory]
-        [ParameterAttributeData]
-        public void CreateIsMasterCommand_with_args_should_return_expected_result(
-            [Values("{ client : { driver : 'dotnet', version : '2.4.0' }, os : { type : 'Windows' } }")]
-            string clientDocumentString)
-        {
-            var clientDocument = BsonDocument.Parse(clientDocumentString);
-
-            var result = _subject.CreateIsMasterCommand(clientDocument);
-
-            result.Should().Be($"{{ isMaster : 1, client : {clientDocumentString} }}");
+            result.AvailableCompressors.Count.Should().Be(1);
+            result.AvailableCompressors.Should().Contain(CompressorType.Zlib);
         }
     }
 }

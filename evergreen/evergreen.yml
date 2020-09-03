@@ -214,8 +214,21 @@ functions:
       params:
         working_dir: mongo-csharp-driver
         script: |
+          set +x
+          export FLE_AWS_ACCESS_KEY_ID=${FLE_AWS_ACCESS_KEY_ID}
+          export FLE_AWS_SECRET_ACCESS_KEY=${FLE_AWS_SECRET_ACCESS_KEY}
           ${PREPARE_SHELL}
-          AUTH=${AUTH} SSL=${SSL} MONGODB_URI="${MONGODB_URI}" TOPOLOGY=${TOPOLOGY} OS=${OS} evergreen/run-tests.sh
+          AUTH=${AUTH} SSL=${SSL} MONGODB_URI="${MONGODB_URI}" TOPOLOGY=${TOPOLOGY} OS=${OS} COMPRESSOR=${COMPRESSOR} evergreen/run-tests.sh
+
+  run-atlas-connectivity-tests:
+    - command: shell.exec
+      type: test
+      params:
+        silent: true
+        working_dir: mongo-csharp-driver
+        script: |
+          # DO NOT ECHO WITH XTRACE (which PREPARE_SHELL does)
+          ATLAS_FREE="${ATLAS_FREE}" ATLAS_FREE_SRV="${ATLAS_FREE_SRV}" ATLAS_REPLICA="${ATLAS_REPLICA}" ATLAS_REPLICA_SRV="${ATLAS_REPLICA_SRV}" ATLAS_SHARDED="${ATLAS_SHARDED}" ATLAS_SHARDED_SRV="${ATLAS_SHARDED_SRV}" ATLAS_TLS11="${ATLAS_TLS11}" ATLAS_TLS11_SRV="${ATLAS_TLS11_SRV}" ATLAS_TLS12="${ATLAS_TLS12}" ATLAS_TLS12_SRV="${ATLAS_TLS12_SRV}" evergreen/run-atlas-connectivity-tests.sh
 
   run-plain-auth-tests:
     - command: shell.exec
@@ -289,15 +302,6 @@ functions:
           ${PREPARE_SHELL}
           echo '{"results": [{ "status": "FAIL", "test_file": "Build", "log_raw": "No test-results.json found was created" } ]}' > ${PROJECT_DIRECTORY}/test-results.json
 
-  install-dependencies:
-    type: test
-    params:
-      working_dir: mongo-csharp-driver
-      script: |
-        ${PREPARE_SHELL}
-        file="${PROJECT_DIRECTORY}/evergreen/install-dependencies.sh"
-        [ -f ${file} ] && sh ${file} || echo "${file} not available, skipping"
-
 pre:
   - func: fetch-source
   - func: prepare-resources
@@ -305,8 +309,7 @@ pre:
   - func: fix-absolute-paths
   - func: init-test-results
   - func: make-files-executable
-  - func: install-dependencies
-
+  
 post:
   # Removed, causing timeouts
   # - func: upload-working-dir
@@ -331,6 +334,13 @@ tasks:
         - func: bootstrap-mongo-orchestration
         - func: run-tests
 
+    - name: atlas-connectivity-tests
+      depends_on:
+        - variant: windows-64-compile
+          name: compile
+      commands:
+        - func: run-atlas-connectivity-tests
+
     - name: plain-auth-tests
       depends_on:
         - variant: windows-64-compile
@@ -349,10 +359,14 @@ axes:
   - id: version
     display_name: MongoDB Version
     values:
-      - id: "latest"
-        display_name: "latest"
+      - id: "4.2"
+        display_name: "4.2"
         variables:
-           VERSION: "latest"
+           VERSION: "4.2"       
+      - id: "4.0"
+        display_name: "4.0"
+        variables:
+           VERSION: "4.0"
       - id: "3.6"
         display_name: "3.6"
         variables:
@@ -381,7 +395,7 @@ axes:
         display_name: "Windows 64-bit"
         variables:
           OS: "windows-64"
-        run_on: windows-64-vs2015-small
+        run_on: windows-64-vs2017-test
 
   - id: topology
     display_name: Topology
@@ -423,32 +437,72 @@ axes:
         variables:
            SSL: "nossl"
 
+  - id: compressor
+    display_name: Compressor
+    values:
+      - id: "zlib"
+        display_name: Zlib
+        variables:
+           COMPRESSOR: "zlib"
+      - id: "snappy"
+        display_name: Snappy
+        variables:
+           COMPRESSOR: "snappy"
+
 buildvariants:
 
 - name: windows-64-compile
   display_name: "Windows 64-bit compile"
   run_on:
-    - windows-64-vs2015-small
+    - windows-64-vs2017-compile
   tasks:
     - name: compile
 
-- matrix_name: "tests"
-  matrix_spec: { version: "*", topology: "*", auth: "*", ssl: "*", os: "*" }
+- matrix_name: "secure-tests"
+  matrix_spec: { version: "*", topology: "*", auth: "auth", ssl: "ssl", os: "*" }
   display_name: "${version} ${topology} ${auth} ${ssl} ${os}"
   tags: ["tests-variant"]
   tasks:
      - name: test
 
+- matrix_name: "unsecure-tests"
+  matrix_spec: { version: "*", topology: "*", auth: "noauth", ssl: "nossl", os: "*" }
+  display_name: "${version} ${topology} ${auth} ${ssl} ${os}"
+  tags: ["tests-variant"]
+  tasks:
+     - name: test
+
+- matrix_name: "tests-zlib-compression"
+  matrix_spec: { compressor : "zlib", auth: "noauth", ssl: "nossl", version: ["3.6", "4.0", "4.2"], topology: "standalone", os: "*" }
+  display_name: "${version} ${compressor} ${topology} ${auth} ${ssl} ${os} "
+  tags: ["tests-variant"]
+  tasks:
+     - name: "test"
+
+- matrix_name: "tests-snappy-compression"
+  matrix_spec: { compressor : "snappy", auth: "noauth", ssl: "nossl", version: ["3.6", "4.0", "4.2"], topology: "standalone", os: "*" }
+  display_name: "${version} ${compressor} ${topology} ${auth} ${ssl} ${os} "
+  tags: ["tests-variant"]
+  tasks:
+     - name: "test"
+
+- name: atlas-connectivity-tests
+  display_name: "Atlas Connectivity Tests"
+  run_on:
+    - windows-64-vs2017-test
+  tasks:
+    - name: atlas-connectivity-tests
+
 # - name: plain-auth-tests
 #   display_name: "PLAIN (LDAP) Auth tests"
 #   run_on:
-#     - windows-64-vs2015-small
+#     - windows-64-vs2017-test
 #   tasks:
 #     - name: plain-auth-tests
 
 # - name: publish-snapshot
 #   display_name: publish-snapshot
 #   run_on:
-#     - windows-64-vs2015-small
+#     - windows-64-vs2017-test
 #   tasks:
 #     - name: publish-snapshot

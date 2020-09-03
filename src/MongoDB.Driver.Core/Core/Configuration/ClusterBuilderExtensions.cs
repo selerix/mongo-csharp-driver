@@ -14,16 +14,13 @@
 */
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using MongoDB.Driver.Core.Authentication;
 using MongoDB.Driver.Core.Clusters;
-using MongoDB.Driver.Core.Events;
 using MongoDB.Driver.Core.Events.Diagnostics;
 using MongoDB.Driver.Core.Misc;
 
@@ -61,7 +58,12 @@ namespace MongoDB.Driver.Core.Configuration
             Ensure.IsNotNull(builder, nameof(builder));
             Ensure.IsNotNull(connectionString, nameof(connectionString));
 
-            connectionString = connectionString.Resolve();
+            if (!connectionString.IsResolved)
+            {
+                var connectionMode = connectionString.Connect;
+                var resolveHosts = connectionMode == ClusterConnectionMode.Direct || connectionMode == ClusterConnectionMode.Standalone;
+                connectionString = connectionString.Resolve(resolveHosts);
+            }
 
             // TCP
             if (connectionString.ConnectTimeout != null)
@@ -88,14 +90,13 @@ namespace MongoDB.Driver.Core.Configuration
                     writeTimeout: connectionString.SocketTimeout.Value));
             }
 
-            if (connectionString.Ssl != null)
+            if (connectionString.Tls != null)
             {
                 builder = builder.ConfigureSsl(ssl =>
                 {
-                    if (!connectionString.SslVerifyCertificate.GetValueOrDefault(true))
+                    if (connectionString.TlsInsecure.GetValueOrDefault(false))
                     {
-                        ssl = ssl.With(
-                            serverCertificateValidationCallback: new RemoteCertificateValidationCallback(AcceptAnySslCertificate));
+                        ssl = ssl.With(serverCertificateValidationCallback: new RemoteCertificateValidationCallback(AcceptAnySslCertificate));
                     }
 
                     return ssl;
@@ -121,6 +122,11 @@ namespace MongoDB.Driver.Core.Configuration
                 builder = builder.ConfigureConnection(s => s.With(maxLifeTime: connectionString.MaxLifeTime.Value));
             }
 
+            if (connectionString.Compressors != null)
+            {
+                builder = builder.ConfigureConnection(s => s.With(compressors: connectionString.Compressors.ToArray()));
+            }
+
             // Connection Pool
             if (connectionString.MaxPoolSize != null)
             {
@@ -130,6 +136,7 @@ namespace MongoDB.Driver.Core.Configuration
             {
                 builder = builder.ConfigureConnectionPool(s => s.With(minConnections: connectionString.MinPoolSize.Value));
             }
+#pragma warning disable 618
             if (connectionString.WaitQueueSize != null)
             {
                 builder = builder.ConfigureConnectionPool(s => s.With(waitQueueSize: connectionString.WaitQueueSize.Value));
@@ -140,6 +147,7 @@ namespace MongoDB.Driver.Core.Configuration
                 var waitQueueSize = (int)Math.Round(maxConnections * connectionString.WaitQueueMultiple.Value);
                 builder = builder.ConfigureConnectionPool(s => s.With(waitQueueSize: waitQueueSize));
             }
+#pragma warning restore 618
             if (connectionString.WaitQueueTimeout != null)
             {
                 builder = builder.ConfigureConnectionPool(s => s.With(waitQueueTimeout: connectionString.WaitQueueTimeout.Value));
@@ -192,13 +200,19 @@ namespace MongoDB.Driver.Core.Configuration
                 {
                     return new DefaultAuthenticator(credential);
                 }
+#pragma warning disable 618
                 else if (connectionString.AuthMechanism == MongoDBCRAuthenticator.MechanismName)
                 {
                     return new MongoDBCRAuthenticator(credential);
+#pragma warning restore 618
                 }
                 else if (connectionString.AuthMechanism == ScramSha1Authenticator.MechanismName)
                 {
                     return new ScramSha1Authenticator(credential);
+                }
+                else if (connectionString.AuthMechanism == ScramSha256Authenticator.MechanismName)
+                {
+                    return new ScramSha256Authenticator(credential);
                 }
                 else if (connectionString.AuthMechanism == PlainAuthenticator.MechanismName)
                 {
@@ -234,7 +248,7 @@ namespace MongoDB.Driver.Core.Configuration
             return "admin";
         }
 
-#if NET45
+#if NET452
         /// <summary>
         /// Configures the cluster to write performance counters.
         /// </summary>
@@ -255,7 +269,7 @@ namespace MongoDB.Driver.Core.Configuration
             return builder.Subscribe(subscriber);
         }
 #endif
-
+        
         /// <summary>
         /// Configures the cluster to trace events to the specified <paramref name="traceSource"/>.
         /// </summary>

@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -22,8 +23,11 @@ namespace MongoDB.Driver.Core.Operations
     {
         // private static fields
         private static readonly HashSet<ServerErrorCode> __notResumableChangeStreamErrorCodes;
+        private static readonly HashSet<string> __notResumableChangeStreamErrorLabels;
         private static readonly HashSet<Type> __resumableChangeStreamExceptions;
+        private static readonly HashSet<Type> __retryableReadExceptions;
         private static readonly HashSet<Type> __retryableWriteExceptions;
+        private static readonly HashSet<ServerErrorCode> __retryableReadErrorCodes;
         private static readonly HashSet<ServerErrorCode> __retryableWriteErrorCodes;
 
         // static constructor
@@ -41,9 +45,10 @@ namespace MongoDB.Driver.Core.Operations
                 typeof(MongoCursorNotFoundException)
             };
 
-            __retryableWriteExceptions = new HashSet<Type>(resumableAndRetryableExceptions)
-            {
-            };
+
+            __retryableReadExceptions = new HashSet<Type>(resumableAndRetryableExceptions);
+
+            __retryableWriteExceptions = new HashSet<Type>(resumableAndRetryableExceptions);
 
             var resumableAndRetryableErrorCodes = new HashSet<ServerErrorCode>
             {
@@ -52,6 +57,8 @@ namespace MongoDB.Driver.Core.Operations
                 ServerErrorCode.NetworkTimeout,
                 ServerErrorCode.SocketException
             };
+
+            __retryableReadErrorCodes = new HashSet<ServerErrorCode>(resumableAndRetryableErrorCodes);
 
             __retryableWriteErrorCodes = new HashSet<ServerErrorCode>(resumableAndRetryableErrorCodes)
             {
@@ -64,6 +71,11 @@ namespace MongoDB.Driver.Core.Operations
                 ServerErrorCode.CursorKilled,
                 ServerErrorCode.Interrupted
             };
+
+            __notResumableChangeStreamErrorLabels = new HashSet<string>()
+            {
+                "NonResumableChangeStreamError"
+            };
         }
 
         // public static methods
@@ -73,7 +85,10 @@ namespace MongoDB.Driver.Core.Operations
             if (commandException != null)
             {
                 var code = (ServerErrorCode)commandException.Code;
-                return !__notResumableChangeStreamErrorCodes.Contains(code);
+                var isNonResumable =
+                    __notResumableChangeStreamErrorCodes.Contains(code) ||
+                    __notResumableChangeStreamErrorLabels.Any(c => commandException.HasErrorLabel(c));
+                return !isNonResumable;
             }
             else
             {
@@ -81,18 +96,76 @@ namespace MongoDB.Driver.Core.Operations
             }
         }
 
-        public static bool IsRetryableWriteException(Exception exception)
+        public static bool IsRetryableReadException(Exception exception)
         {
+            if (__retryableReadExceptions.Contains(exception.GetType()))
+            {
+                return true;
+            }
+
             var commandException = exception as MongoCommandException;
             if (commandException != null)
             {
                 var code = (ServerErrorCode)commandException.Code;
-                return __retryableWriteErrorCodes.Contains(code);
+                if (__retryableReadErrorCodes.Contains(code))
+                {
+                    return true;
+                }
             }
-            else
+
+            return false;
+        }
+
+        public static bool IsRetryableWriteException(Exception exception)
+        {
+            if (__retryableWriteExceptions.Contains(exception.GetType()))
             {
-                return __retryableWriteExceptions.Contains(exception.GetType());
+                return true;
             }
+
+            var commandException = exception as MongoCommandException;
+            if (commandException != null)
+            {
+                var code = (ServerErrorCode)commandException.Code;
+                if (__retryableWriteErrorCodes.Contains(code))
+                {
+                    return true;
+                }
+            }
+
+            var writeConcernException = exception as MongoWriteConcernException;
+            if (writeConcernException != null)
+            {
+                var writeConcernError = writeConcernException.WriteConcernResult.Response.GetValue("writeConcernError", null)?.AsBsonDocument;
+                if (writeConcernError != null)
+                {
+                    var code = (ServerErrorCode)writeConcernError.GetValue("code", -1).AsInt32;
+                    switch (code)
+                    {
+                        case ServerErrorCode.InterruptedAtShutdown:
+                        case ServerErrorCode.InterruptedDueToReplStateChange:
+                        case ServerErrorCode.NotMaster:
+                        case ServerErrorCode.NotMasterNoSlaveOk:
+                        case ServerErrorCode.NotMasterOrSecondary:
+                        case ServerErrorCode.PrimarySteppedDown:
+                        case ServerErrorCode.ShutdownInProgress:
+                        case ServerErrorCode.HostNotFound:
+                        case ServerErrorCode.HostUnreachable:
+                        case ServerErrorCode.NetworkTimeout:
+                        case ServerErrorCode.SocketException:
+                            return true;
+                    }
+
+                    var message = writeConcernError.GetValue("errmsg", null)?.AsString;
+                    if (message.IndexOf("not master", StringComparison.OrdinalIgnoreCase) != -1 ||
+                        message.IndexOf("node is recovering", StringComparison.OrdinalIgnoreCase) != -1)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 }

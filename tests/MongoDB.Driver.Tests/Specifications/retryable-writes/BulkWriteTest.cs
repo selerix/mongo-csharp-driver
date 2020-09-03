@@ -65,7 +65,12 @@ namespace MongoDB.Driver.Tests.Specifications.retryable_writes
 
         protected override void VerifyResult(BsonDocument result)
         {
-            var expectedResult = ParseResult(result);
+            var expectedResult = ParseResult(result, out var expectedInsertedIds);
+            foreach (var insertedId in expectedInsertedIds)
+            {
+                var insertModel = (InsertOneModel<BsonDocument>)_result.ProcessedRequests[insertedId.Key];
+                insertModel.Document["_id"].Should().Be(insertedId.Value);
+            }
             _result.DeletedCount.Should().Be(expectedResult.DeletedCount);
             _result.InsertedCount.Should().Be(expectedResult.InsertedCount);
             _result.MatchedCount.Should().Be(expectedResult.MatchedCount);
@@ -90,6 +95,9 @@ namespace MongoDB.Driver.Tests.Specifications.retryable_writes
 
             switch (name)
             {
+                case "deleteMany":
+                    return ParseDeleteMany(arguments);
+
                 case "deleteOne":
                     return ParseDeleteOne(arguments);
 
@@ -99,12 +107,22 @@ namespace MongoDB.Driver.Tests.Specifications.retryable_writes
                 case "replaceOne":
                     return ParseReplaceOne(arguments);
 
+                case "updateMany":
+                    return ParseUpdateMany(arguments);
+
                 case "updateOne":
                     return ParseUpdateOne(arguments);
 
                 default:
                     throw new ArgumentException($"Unexpected request: {name}.");
             }
+        }
+
+        private DeleteManyModel<BsonDocument> ParseDeleteMany(BsonDocument arguments)
+        {
+            VerifyFields(arguments, "filter");
+            var filter = arguments["filter"].AsBsonDocument;
+            return new DeleteManyModel<BsonDocument>(filter);
         }
 
         private DeleteOneModel<BsonDocument> ParseDeleteOne(BsonDocument arguments)
@@ -127,6 +145,15 @@ namespace MongoDB.Driver.Tests.Specifications.retryable_writes
             var filter = arguments["filter"].AsBsonDocument;
             var replacement = arguments["replacement"].AsBsonDocument;
             return new ReplaceOneModel<BsonDocument>(filter, replacement);
+        }
+
+        private UpdateManyModel<BsonDocument> ParseUpdateMany(BsonDocument arguments)
+        {
+            VerifyFields(arguments, "filter", "update", "upsert");
+            var filter = arguments["filter"].AsBsonDocument;
+            var update = arguments["update"].AsBsonDocument;
+            var isUpsert = arguments.GetValue("upsert", false).ToBoolean();
+            return new UpdateManyModel<BsonDocument>(filter, update) { IsUpsert = isUpsert };
         }
 
         private UpdateOneModel<BsonDocument> ParseUpdateOne(BsonDocument arguments)
@@ -158,12 +185,15 @@ namespace MongoDB.Driver.Tests.Specifications.retryable_writes
             return result;
         }
 
-        private BulkWriteResult<BsonDocument> ParseResult(BsonDocument result)
+        private BulkWriteResult<BsonDocument> ParseResult(BsonDocument result, out Dictionary<int, int> expectedInsertedIds)
         {
             VerifyFields(result, "deletedCount", "insertedCount", "insertedIds", "matchedCount", "modifiedCount", "upsertedCount", "upsertedIds");
 
             var deletedCount = result["deletedCount"].ToInt64();
-            var insertedCount = result["insertedIds"].AsBsonDocument.ElementCount; // TODO: anything to verify besides count?
+            var insertedCount = result["insertedCount"].ToInt64();
+            expectedInsertedIds = result["insertedIds"]
+                .AsBsonDocument
+                .ToDictionary(k => Convert.ToInt32(k.Name), v => v.Value.ToInt32());
             var matchedCount = result["matchedCount"].ToInt64();
             var modifiedCount = result["modifiedCount"].ToInt64();
             var processedRequests = new List<WriteModel<BsonDocument>>(_requests);

@@ -35,7 +35,7 @@ namespace MongoDB.Driver.Core.Operations
     /// Represents a Find opcode operation.
     /// </summary>
     /// <typeparam name="TDocument">The type of the returned documents.</typeparam>
-    public class FindOpcodeOperation<TDocument> : IReadOperation<IAsyncCursor<TDocument>>
+    public class FindOpcodeOperation<TDocument> : IReadOperation<IAsyncCursor<TDocument>>, IExecutableInRetryableReadContext<IAsyncCursor<TDocument>>
     {
         // fields
         private bool? _allowPartialResults;
@@ -206,6 +206,7 @@ namespace MongoDB.Driver.Core.Operations
         /// <value>
         /// The max scan.
         /// </value>
+        [Obsolete("MaxScan was deprecated in server version 4.0.")]
         public int? MaxScan
         {
             get { return _maxScan; }
@@ -336,6 +337,7 @@ namespace MongoDB.Driver.Core.Operations
         /// <value>
         /// Whether to use snapshot behavior.
         /// </value>
+        [Obsolete("Snapshot was deprecated in server version 3.7.4.")]
         public bool? Snapshot
         {
             get { return _snapshot; }
@@ -440,20 +442,27 @@ namespace MongoDB.Driver.Core.Operations
         {
             Ensure.IsNotNull(binding, nameof(binding));
 
-            using (EventContext.BeginOperation())
-            using (var channelSource = binding.GetReadChannelSource(cancellationToken))
-            using (var channel = channelSource.GetChannel(cancellationToken))
+            using (var context = RetryableReadContext.Create(binding, retryRequested: false, cancellationToken))
             {
-                var readPreference = binding.ReadPreference;
-                var serverDescription = channelSource.ServerDescription;
+                return Execute(context, cancellationToken);
+            }
+        }
+
+        /// <inheritdoc/>
+        public IAsyncCursor<TDocument> Execute(RetryableReadContext context, CancellationToken cancellationToken)
+        {
+            Ensure.IsNotNull(context, nameof(context));
+
+            using (EventContext.BeginOperation())
+            using (EventContext.BeginFind(_batchSize, _limit))
+            {
+                var readPreference = context.Binding.ReadPreference;
+                var serverDescription = context.ChannelSource.ServerDescription;
                 var wrappedQuery = CreateWrappedQuery(serverDescription.Type, readPreference);
                 var slaveOk = readPreference != null && readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary;
 
-                using (EventContext.BeginFind(_batchSize, _limit))
-                {
-                    var batch = ExecuteProtocol(channel, wrappedQuery, slaveOk, cancellationToken);
-                    return CreateCursor(channelSource, wrappedQuery, batch);
-                }
+                var batch = ExecuteProtocol(context.Channel, wrappedQuery, slaveOk, cancellationToken);
+                return CreateCursor(context.ChannelSource, wrappedQuery, batch);
             }
         }
 
@@ -462,20 +471,27 @@ namespace MongoDB.Driver.Core.Operations
         {
             Ensure.IsNotNull(binding, nameof(binding));
 
-            using (EventContext.BeginOperation())
-            using (var channelSource = await binding.GetReadChannelSourceAsync(cancellationToken).ConfigureAwait(false))
-            using (var channel = await channelSource.GetChannelAsync(cancellationToken).ConfigureAwait(false))
+            using (var context = await RetryableReadContext.CreateAsync(binding, retryRequested: false, cancellationToken).ConfigureAwait(false))
             {
-                var readPreference = binding.ReadPreference;
-                var serverDescription = channelSource.ServerDescription;
+                return await ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<IAsyncCursor<TDocument>> ExecuteAsync(RetryableReadContext context, CancellationToken cancellationToken)
+        {
+            Ensure.IsNotNull(context, nameof(context));
+
+            using (EventContext.BeginOperation())
+            using (EventContext.BeginFind(_batchSize, _limit))
+            {
+                var readPreference = context.Binding.ReadPreference;
+                var serverDescription = context.ChannelSource.ServerDescription;
                 var wrappedQuery = CreateWrappedQuery(serverDescription.Type, readPreference);
                 var slaveOk = readPreference != null && readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary;
 
-                using (EventContext.BeginFind(_batchSize, _limit))
-                {
-                    var batch = await ExecuteProtocolAsync(channel, wrappedQuery, slaveOk, cancellationToken).ConfigureAwait(false);
-                    return CreateCursor(channelSource, wrappedQuery, batch);
-                }
+                var batch = await ExecuteProtocolAsync(context.Channel, wrappedQuery, slaveOk, cancellationToken).ConfigureAwait(false);
+                return CreateCursor(context.ChannelSource, wrappedQuery, batch);
             }
         }
 

@@ -18,17 +18,15 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using MongoDB.Bson;
-using MongoDB.Driver.Core.Async;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters.ServerSelectors;
 using MongoDB.Driver.Core.Configuration;
 using MongoDB.Driver.Core.Events;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Servers;
+using MongoDB.Libmongocrypt;
 
 namespace MongoDB.Driver.Core.Clusters
 {
@@ -40,9 +38,9 @@ namespace MongoDB.Driver.Core.Clusters
         #region static
         // static fields
         private static readonly TimeSpan __minHeartbeatInterval = TimeSpan.FromMilliseconds(500);
-        private static readonly Range<int> __supportedWireVersionRange = new Range<int>(2, 6);
         private static readonly SemanticVersion __minSupportedServerVersion = new SemanticVersion(2, 6, 0);
         private static readonly IServerSelector __randomServerSelector = new RandomServerSelector();
+        private static readonly Range<int> __supportedWireVersionRange = new Range<int>(2, 8);
 
         // static properties
         /// <summary>
@@ -65,6 +63,7 @@ namespace MongoDB.Driver.Core.Clusters
         // fields
         private readonly IClusterClock _clusterClock = new ClusterClock();
         private readonly ClusterId _clusterId;
+        private CryptClient _cryptClient = null;
         private ClusterDescription _description;
         private TaskCompletionSource<bool> _descriptionChangedTaskCompletionSource;
         private readonly object _descriptionLock = new object();
@@ -110,6 +109,11 @@ namespace MongoDB.Driver.Core.Clusters
         public ClusterId ClusterId
         {
             get { return _clusterId; }
+        }
+
+        public CryptClient CryptClient
+        {
+            get { return _cryptClient; }
         }
 
         public ClusterDescription Description
@@ -191,7 +195,13 @@ namespace MongoDB.Driver.Core.Clusters
         public virtual void Initialize()
         {
             ThrowIfDisposed();
-            _state.TryChange(State.Initial, State.Open);
+            if (_state.TryChange(State.Initial, State.Open))
+            {
+                if (_settings.KmsProviders != null || _settings.SchemaMap != null)
+                {
+                    _cryptClient = CryptClientCreator.CreateCryptClient(_settings.KmsProviders, _settings.SchemaMap);
+                }
+            }
         }
 
         private void RapidHeartbeatTimerCallback(object args)
@@ -308,7 +318,9 @@ namespace MongoDB.Driver.Core.Clusters
             }
 
             OnDescriptionChanged(oldClusterDescription, newClusterDescription);
-            oldDescriptionChangedTaskCompletionSource.TrySetResult(true);
+
+            // TODO: use RunContinuationsAsynchronously instead once we require a new enough .NET Framework
+            Task.Run(() => oldDescriptionChangedTaskCompletionSource.TrySetResult(true));
         }
 
         private string BuildTimeoutExceptionMessage(TimeSpan timeout, IServerSelector selector, ClusterDescription clusterDescription)
@@ -351,7 +363,7 @@ namespace MongoDB.Driver.Core.Clusters
         {
             using (var helper = new WaitForDescriptionChangedHelper(this, selector, description, descriptionChangedTask, timeout, cancellationToken))
             {
-                var completedTask  = await Task.WhenAny(helper.Tasks).ConfigureAwait(false);
+                var completedTask = await Task.WhenAny(helper.Tasks).ConfigureAwait(false);
                 helper.HandleCompletedTask(completedTask);
             }
         }
@@ -529,7 +541,7 @@ namespace MongoDB.Driver.Core.Clusters
             private readonly CancellationTokenSource _timeoutCancellationTokenSource;
             private readonly Task _timeoutTask;
 
-            public  WaitForDescriptionChangedHelper(Cluster cluster, IServerSelector selector, ClusterDescription description, Task descriptionChangedTask , TimeSpan timeout, CancellationToken cancellationToken)
+            public WaitForDescriptionChangedHelper(Cluster cluster, IServerSelector selector, ClusterDescription description, Task descriptionChangedTask, TimeSpan timeout, CancellationToken cancellationToken)
             {
                 _cluster = cluster;
                 _description = description;

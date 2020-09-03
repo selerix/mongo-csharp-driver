@@ -17,7 +17,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
-using MongoDB.Driver.Core.Clusters;
 
 namespace MongoDB.Driver.Core.Bindings
 {
@@ -58,6 +57,14 @@ namespace MongoDB.Driver.Core.Bindings
         ///   <c>true</c> if the session is causally consistent.
         /// </value>
         bool IsCausallyConsistent { get; }
+        
+        /// <summary>
+        /// Gets a value indicate whether this session is dirty.
+        /// </summary>
+        /// <value>
+        ///   <c>true</c> if the session is dirty.
+        /// </value>
+        bool IsDirty { get; }
 
         /// <summary>
         /// Gets a value indicating whether this instance is implicit session.
@@ -114,6 +121,11 @@ namespace MongoDB.Driver.Core.Bindings
         Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
 
         /// <summary>
+        /// The driver is about to send a command on this session. Called to track session state.
+        /// </summary>
+        void AboutToSendCommand();
+
+        /// <summary>
         /// Advances the cluster time.
         /// </summary>
         /// <param name="newClusterTime">The new cluster time.</param>
@@ -145,6 +157,11 @@ namespace MongoDB.Driver.Core.Bindings
         Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
 
         /// <summary>
+        /// Marks the session as dirty.
+        /// </summary>
+        void MarkDirty();
+
+        /// <summary>
         /// Starts a transaction.
         /// </summary>
         /// <param name="transactionOptions">The transaction options.</param>
@@ -167,16 +184,5 @@ namespace MongoDB.Driver.Core.Bindings
         /// </summary>
         /// <returns>A new handle.</returns>
         ICoreSessionHandle Fork();
-    }
-
-    internal static class ICoreSessionHandleExtensions
-    {
-        public static void AutoStartTransactionIfApplicable(this ICoreSession session)
-        {
-            if (!session.IsInTransaction && session.Options != null && session.Options.AutoStartTransaction)
-            {
-                session.StartTransaction();
-            }
-        }
     }
 }

@@ -30,7 +30,9 @@ namespace MongoDB.Driver.Core.Authentication
 {
     /// <summary>
     /// A MONGODB-CR authenticator.
+    /// This authenticator was replaced by <see cref="ScramSha1Authenticator"/> in MongoDB 3.0, and is now deprecated.
     /// </summary>
+    [Obsolete("This authenticator was replaced by ScramSha1Authenticator in MongoDB 3.0, and is now deprecated.")]
     public sealed class MongoDBCRAuthenticator : IAuthenticator
     {
         // static properties
@@ -102,6 +104,12 @@ namespace MongoDB.Driver.Core.Authentication
             {
                 throw CreateException(connection, ex);
             }
+        }
+
+        /// <inheritdoc/>
+        public BsonDocument CustomizeInitialIsMasterCommand(BsonDocument isMasterCommand)
+        {
+            return isMasterCommand;
         }
 
         // private methods

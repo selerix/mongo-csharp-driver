@@ -14,6 +14,7 @@
 */
 
 using System;
+using System.Linq;
 using System.Threading;
 using FluentAssertions;
 using MongoDB.Bson;
@@ -24,6 +25,7 @@ using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Operations;
+using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Tests;
 using Moq;
 using Xunit;
@@ -62,6 +64,176 @@ namespace MongoDB.Driver
 
         [Theory]
         [ParameterAttributeData]
+        public void Aggregate_should_execute_an_AggregateOperation_when_out_is_not_specified(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            var subject = _subject;
+            var session = CreateSession(usingSession);
+            var pipeline = new EmptyPipelineDefinition<NoPipelineInput>()
+                .AppendStage<NoPipelineInput, NoPipelineInput, BsonDocument>("{ $currentOp : { } }")
+                .Limit(1);
+            var options = new AggregateOptions()
+            {
+                AllowDiskUse = true,
+                BatchSize = 10,
+                Collation = new Collation("en_US"),
+                Comment = "test",
+                Hint = new BsonDocument("x", 1),
+                MaxAwaitTime = TimeSpan.FromSeconds(4),
+                MaxTime = TimeSpan.FromSeconds(3),
+                UseCursor = false
+            };
+            var cancellationToken = new CancellationTokenSource().Token;
+            var renderedPipeline = RenderPipeline(subject, pipeline);
+
+            if (usingSession)
+            {
+                if (async)
+                {
+                    subject.AggregateAsync(session, pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    subject.Aggregate(session, pipeline, options, cancellationToken);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    subject.AggregateAsync(pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    subject.Aggregate(pipeline, options, cancellationToken);
+                }
+            }
+
+            var call = _operationExecutor.GetReadCall<IAsyncCursor<BsonDocument>>();
+            VerifySessionAndCancellationToken(call, session, cancellationToken);
+
+            var operation = call.Operation.Should().BeOfType<AggregateOperation<BsonDocument>>().Subject;
+            operation.AllowDiskUse.Should().Be(options.AllowDiskUse);
+            operation.BatchSize.Should().Be(options.BatchSize);
+            operation.Collation.Should().BeSameAs(options.Collation);
+            operation.CollectionNamespace.Should().BeNull();
+            operation.Comment.Should().Be(options.Comment);
+            operation.DatabaseNamespace.Should().BeSameAs(subject.DatabaseNamespace);
+            operation.Hint.Should().Be(options.Hint);
+            operation.MaxAwaitTime.Should().Be(options.MaxAwaitTime);
+            operation.MaxTime.Should().Be(options.MaxTime);
+            operation.Pipeline.Should().Equal(renderedPipeline.Documents);
+            operation.ReadConcern.Should().Be(subject.Settings.ReadConcern);
+            operation.RetryRequested.Should().BeTrue();
+            operation.ResultSerializer.Should().BeSameAs(renderedPipeline.OutputSerializer);
+            operation.UseCursor.Should().Be(options.UseCursor);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void Aggregate_should_execute_an_AggregateToCollectionOperation_and_a_FindOperation_when_out_is_specified(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            var writeConcern = new WriteConcern(1);
+            var subject = CreateSubject(null).WithWriteConcern(writeConcern);
+            var session = CreateSession(usingSession);
+            var pipeline = new EmptyPipelineDefinition<NoPipelineInput>()
+                .AppendStage<NoPipelineInput, NoPipelineInput, BsonDocument>("{ $currentOp : { } }")
+                .Out(subject.GetCollection<BsonDocument>("funny"));
+            var options = new AggregateOptions()
+            {
+                AllowDiskUse = true,
+                BatchSize = 10,
+                BypassDocumentValidation = true,
+                Collation = new Collation("en_US"),
+                Comment = "test",
+                Hint = new BsonDocument("x", 1),
+                MaxTime = TimeSpan.FromSeconds(3),
+                UseCursor = false,
+            };
+            var cancellationToken1 = new CancellationTokenSource().Token;
+            var cancellationToken2 = new CancellationTokenSource().Token;
+            var renderedPipeline = RenderPipeline(subject, pipeline);
+
+            IAsyncCursor<BsonDocument> result;
+            if (usingSession)
+            {
+                if (async)
+                {
+                    result = subject.AggregateAsync(session, pipeline, options, cancellationToken1).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    result = subject.Aggregate(session, pipeline, options, cancellationToken1);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    result = subject.AggregateAsync(pipeline, options, cancellationToken1).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    result = subject.Aggregate(pipeline, options, cancellationToken1);
+                }
+            }
+
+            var aggregateCall = _operationExecutor.GetWriteCall<BsonDocument>();
+            VerifySessionAndCancellationToken(aggregateCall, session, cancellationToken1);
+
+            var aggregateOperation = aggregateCall.Operation.Should().BeOfType<AggregateToCollectionOperation>().Subject;
+            aggregateOperation.AllowDiskUse.Should().Be(options.AllowDiskUse);
+            aggregateOperation.BypassDocumentValidation.Should().Be(options.BypassDocumentValidation);
+            aggregateOperation.Collation.Should().BeSameAs(options.Collation);
+            aggregateOperation.CollectionNamespace.Should().BeNull();
+            aggregateOperation.Comment.Should().Be(options.Comment);
+            aggregateOperation.DatabaseNamespace.Should().BeSameAs(subject.DatabaseNamespace);
+            aggregateOperation.Hint.Should().Be(options.Hint);
+            aggregateOperation.MaxTime.Should().Be(options.MaxTime);
+            aggregateOperation.Pipeline.Should().Equal(renderedPipeline.Documents);
+            aggregateOperation.WriteConcern.Should().BeSameAs(writeConcern);
+
+            var mockCursor = new Mock<IAsyncCursor<BsonDocument>>();
+            _operationExecutor.EnqueueResult(mockCursor.Object);
+
+            if (async)
+            {
+                result.MoveNextAsync(cancellationToken2).GetAwaiter().GetResult();
+            }
+            else
+            {
+                result.MoveNext(cancellationToken2);
+            }
+
+            var findCall = _operationExecutor.GetReadCall<IAsyncCursor<BsonDocument>>();
+            VerifySessionAndCancellationToken(findCall, session, cancellationToken2);
+
+            var findOperation = findCall.Operation.Should().BeOfType<FindOperation<BsonDocument>>().Subject;
+            findOperation.AllowPartialResults.Should().NotHaveValue();
+            findOperation.BatchSize.Should().Be(options.BatchSize);
+            findOperation.Collation.Should().BeSameAs(options.Collation);
+            findOperation.CollectionNamespace.FullName.Should().Be("foo.funny");
+            findOperation.Comment.Should().BeNull();
+            findOperation.CursorType.Should().Be(Core.Operations.CursorType.NonTailable);
+            findOperation.Filter.Should().BeNull();
+            findOperation.Limit.Should().Be(null);
+            findOperation.MaxTime.Should().Be(options.MaxTime);
+#pragma warning disable 618
+            findOperation.Modifiers.Should().BeNull();
+#pragma warning restore 618
+            findOperation.NoCursorTimeout.Should().NotHaveValue();
+            findOperation.OplogReplay.Should().NotHaveValue();
+            findOperation.Projection.Should().BeNull();
+            findOperation.RetryRequested.Should().BeTrue();
+            findOperation.Skip.Should().Be(null);
+            findOperation.Sort.Should().BeNull();
+        }
+
+        [Theory]
+        [ParameterAttributeData]
         public void CreateCollection_should_execute_a_CreateCollectionOperation_when_options_is_generic(
             [Values(false, true)] bool usingSession,
             [Values(false, true)] bool async)
@@ -73,6 +245,7 @@ namespace MongoDB.Driver
             var storageEngine = new BsonDocument("awesome", true);
             var validatorDocument = BsonDocument.Parse("{ x : 1 }");
             var validatorDefinition = (FilterDefinition<BsonDocument>)validatorDocument;
+#pragma warning disable 618
             var options = new CreateCollectionOptions<BsonDocument>
             {
                 AutoIndexId = false,
@@ -88,6 +261,7 @@ namespace MongoDB.Driver
                 ValidationLevel = DocumentValidationLevel.Off,
                 Validator = validatorDefinition
             };
+#pragma warning restore
             var cancellationToken = new CancellationTokenSource().Token;
 
             if (usingSession)
@@ -118,7 +292,9 @@ namespace MongoDB.Driver
 
             var op = call.Operation.Should().BeOfType<CreateCollectionOperation>().Subject;
             op.CollectionNamespace.Should().Be(new CollectionNamespace(_subject.DatabaseNamespace, name));
+#pragma warning disable 618
             op.AutoIndexId.Should().Be(options.AutoIndexId);
+#pragma warning restore
             op.Capped.Should().Be(options.Capped);
             op.Collation.Should().BeSameAs(options.Collation);
             op.IndexOptionDefaults.ToBsonDocument().Should().Be(options.IndexOptionDefaults.ToBsonDocument());
@@ -144,6 +320,7 @@ namespace MongoDB.Driver
             var session = CreateSession(usingSession);
             var name = "bar";
             var storageEngine = new BsonDocument("awesome", true);
+#pragma warning disable 618
             var options = new CreateCollectionOptions
             {
                 AutoIndexId = false,
@@ -158,6 +335,7 @@ namespace MongoDB.Driver
                 ValidationAction = DocumentValidationAction.Warn,
                 ValidationLevel = DocumentValidationLevel.Off
             };
+#pragma warning restore
             var cancellationToken = new CancellationTokenSource().Token;
 
             if (usingSession)
@@ -188,7 +366,9 @@ namespace MongoDB.Driver
 
             var op = call.Operation.Should().BeOfType<CreateCollectionOperation>().Subject;
             op.CollectionNamespace.Should().Be(new CollectionNamespace(_subject.DatabaseNamespace, name));
+#pragma warning disable 618
             op.AutoIndexId.Should().Be(options.AutoIndexId);
+#pragma warning restore
             op.Capped.Should().Be(options.Capped);
             op.Collation.Should().BeSameAs(options.Collation);
             op.IndexOptionDefaults.ToBsonDocument().Should().Be(options.IndexOptionDefaults.ToBsonDocument());
@@ -242,7 +422,9 @@ namespace MongoDB.Driver
 
             var op = call.Operation.Should().BeOfType<CreateCollectionOperation>().Subject;
             op.CollectionNamespace.Should().Be(new CollectionNamespace(_subject.DatabaseNamespace, name));
+#pragma warning disable 618
             op.AutoIndexId.Should().NotHaveValue();
+#pragma warning restore
             op.Capped.Should().NotHaveValue();
             op.IndexOptionDefaults.Should().BeNull();
             op.MaxDocuments.Should().NotHaveValue();
@@ -474,17 +656,139 @@ namespace MongoDB.Driver
 
         [Theory]
         [ParameterAttributeData]
-        public void ListCollections_should_execute_a_ListCollectionsOperation(
+        public void ListCollectionNames_should_execute_a_ListCollectionsOperation(
             [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool usingOptions,
             [Values(false, true)] bool async)
         {
             var session = CreateSession(usingSession);
             var filterDocument = BsonDocument.Parse("{ name : \"awesome\" }");
             var filterDefinition = (FilterDefinition<BsonDocument>)filterDocument;
-            var options = new ListCollectionsOptions
+            ListCollectionNamesOptions options = null;
+            if (usingOptions)
             {
-                Filter = filterDefinition
-            };
+                options = new ListCollectionNamesOptions
+                {
+                    Filter = filterDefinition
+                };
+            }
+            var cancellationToken = new CancellationTokenSource().Token;
+
+            var mockCursor = new Mock<IAsyncCursor<BsonDocument>>();
+            _operationExecutor.EnqueueResult<IAsyncCursor<BsonDocument>>(mockCursor.Object);
+
+            if (usingSession)
+            {
+                if (async)
+                {
+                    _subject.ListCollectionNamesAsync(session, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.ListCollectionNames(session, options, cancellationToken);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    _subject.ListCollectionNamesAsync(options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.ListCollectionNames(options, cancellationToken);
+                }
+            }
+
+            var call = _operationExecutor.GetReadCall<IAsyncCursor<BsonDocument>>();
+            VerifySessionAndCancellationToken(call, session, cancellationToken);
+
+            var op = call.Operation.Should().BeOfType<ListCollectionsOperation>().Subject;
+            op.DatabaseNamespace.Should().Be(_subject.DatabaseNamespace);
+            op.NameOnly.Should().BeTrue();
+            if (usingOptions)
+            {
+                op.Filter.Should().Be(filterDocument);
+            }
+            else
+            {
+                op.Filter.Should().BeNull();
+            }
+            op.RetryRequested.Should().BeTrue();
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void ListCollectionNames_should_return_expected_result(
+            [Values(0, 1, 2, 10)] int numberOfCollections,
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check();
+            if (usingSession)
+            {
+                RequireServer.Check().VersionGreaterThanOrEqualTo("3.6.0");
+            }
+
+            var collectionNames = Enumerable.Range(1, numberOfCollections).Select(n => $"c{n}").ToArray();
+
+            var client = DriverTestConfiguration.Client;
+            var database = client.GetDatabase("ListCollectionNames-test");
+            client.DropDatabase(database.DatabaseNamespace.DatabaseName);
+            foreach (var collectionName in collectionNames)
+            {
+                database.CreateCollection(collectionName);
+            }
+
+            using (var session = usingSession ? client.StartSession() : null)
+            {
+                IAsyncCursor<string> cursor;
+                if (usingSession)
+                {
+                    if (async)
+                    {
+                        cursor = database.ListCollectionNamesAsync(session).GetAwaiter().GetResult();
+                    }
+                    else
+                    {
+                        cursor = database.ListCollectionNames(session);
+                    }
+                }
+                else
+                {
+                    if (async)
+                    {
+                        cursor = database.ListCollectionNamesAsync().GetAwaiter().GetResult();
+                    }
+                    else
+                    {
+                        cursor = database.ListCollectionNames();
+                    }
+                }
+
+                var actualCollectionNames = cursor.ToList();
+                actualCollectionNames.Where(n => n != "system.indexes").Should().BeEquivalentTo(collectionNames);
+            }
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void ListCollections_should_execute_a_ListCollectionsOperation(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool usingOptions,
+            [Values(false, true)] bool async)
+        {
+            var session = CreateSession(usingSession);
+            var filterDocument = BsonDocument.Parse("{ name : \"awesome\" }");
+            var filterDefinition = (FilterDefinition<BsonDocument>)filterDocument;
+            ListCollectionsOptions options = null;
+            if (usingOptions)
+            {
+                options = new ListCollectionsOptions
+                {
+                    Filter = filterDefinition
+                };
+            }
             var cancellationToken = new CancellationTokenSource().Token;
 
             var mockCursor = new Mock<IAsyncCursor<BsonDocument>>();
@@ -518,7 +822,16 @@ namespace MongoDB.Driver
 
             var op = call.Operation.Should().BeOfType<ListCollectionsOperation>().Subject;
             op.DatabaseNamespace.Should().Be(_subject.DatabaseNamespace);
-            op.Filter.Should().Be(filterDocument);
+            op.NameOnly.Should().NotHaveValue();
+            if (usingOptions)
+            {
+                op.Filter.Should().Be(filterDocument);
+            }
+            else
+            {
+                op.Filter.Should().BeNull();
+            }
+            op.RetryRequested.Should().BeTrue();
         }
 
         [Theory]
@@ -797,6 +1110,119 @@ namespace MongoDB.Driver
             op.Command.Should().Be("{ count : \"foo\" }");
         }
 
+        [Theory]
+        [ParameterAttributeData]
+        public void RunCommand_should_set_RetryRequested_to_false(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            var session = CreateSession(usingSession);
+            var commandDocument = new BsonDocument("count", "foo");
+            var command = (Command<BsonDocument>)commandDocument;
+            var readPreference = ReadPreference.Secondary;
+            var cancellationToken = new CancellationTokenSource().Token;
+
+            if (usingSession)
+            {
+                if (async)
+                {
+                    _subject.RunCommandAsync(session, command, readPreference, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.RunCommand(session, command, readPreference, cancellationToken);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    _subject.RunCommandAsync(command, readPreference, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.RunCommand(command, readPreference, cancellationToken);
+                }
+            }
+
+            var call = _operationExecutor.GetReadCall<BsonDocument>();
+
+            var op = call.Operation.Should().BeOfType<ReadCommandOperation<BsonDocument>>().Subject;
+            op.RetryRequested.Should().BeFalse();
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void Watch_should_invoke_the_correct_operation(
+           [Values(false, true)] bool usingSession,
+           [Values(false, true)] bool async)
+        {
+            var session = CreateSession(usingSession);
+            var pipeline = new EmptyPipelineDefinition<ChangeStreamDocument<BsonDocument>>().Limit(1);
+            var options = new ChangeStreamOptions
+            {
+                BatchSize = 123,
+                Collation = new Collation("en-us"),
+                FullDocument = ChangeStreamFullDocumentOption.UpdateLookup,
+                MaxAwaitTime = TimeSpan.FromSeconds(123),
+                ResumeAfter = new BsonDocument(),
+                StartAfter = new BsonDocument(),
+                StartAtOperationTime = new BsonTimestamp(1, 2)
+            };
+            var cancellationToken = new CancellationTokenSource().Token;
+            var renderedPipeline = new[] { BsonDocument.Parse("{ $limit : 1 }") };
+
+            if (usingSession)
+            {
+                if (async)
+                {
+                    _subject.WatchAsync(session, pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.Watch(session, pipeline, options, cancellationToken);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    _subject.WatchAsync(pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    _subject.Watch(pipeline, options, cancellationToken);
+                }
+            }
+
+            var call = _operationExecutor.GetReadCall<IChangeStreamCursor<ChangeStreamDocument<BsonDocument>>>();
+            if (usingSession)
+            {
+                call.SessionId.Should().BeSameAs(session.ServerSession.Id);
+            }
+            else
+            {
+                call.UsedImplicitSession.Should().BeTrue();
+            }
+            call.CancellationToken.Should().Be(cancellationToken);
+
+            var changeStreamOperation = call.Operation.Should().BeOfType<ChangeStreamOperation<ChangeStreamDocument<BsonDocument>>>().Subject;
+            changeStreamOperation.BatchSize.Should().Be(options.BatchSize);
+            changeStreamOperation.Collation.Should().BeSameAs(options.Collation);
+            changeStreamOperation.CollectionNamespace.Should().BeNull();
+            changeStreamOperation.DatabaseNamespace.Should().Be(_subject.DatabaseNamespace);
+            changeStreamOperation.FullDocument.Should().Be(options.FullDocument);
+            changeStreamOperation.MaxAwaitTime.Should().Be(options.MaxAwaitTime);
+            changeStreamOperation.MessageEncoderSettings.Should().NotBeNull();
+            changeStreamOperation.Pipeline.Should().Equal(renderedPipeline);
+            changeStreamOperation.ReadConcern.Should().Be(_subject.Settings.ReadConcern);
+            changeStreamOperation.ResultSerializer.Should().BeOfType<ChangeStreamDocumentSerializer<BsonDocument>>();
+            changeStreamOperation.ResumeAfter.Should().Be(options.ResumeAfter);
+            changeStreamOperation.RetryRequested.Should().BeTrue();
+            changeStreamOperation.StartAfter.Should().Be(options.StartAfter);
+            changeStreamOperation.StartAtOperationTime.Should().Be(options.StartAtOperationTime);
+        }
+
         [Fact]
         public void WithReadConcern_should_return_expected_result()
         {
@@ -861,6 +1287,8 @@ namespace MongoDB.Driver
         private MongoDatabaseImpl CreateSubject(IOperationExecutor operationExecutor)
         {
             var mockClient = new Mock<IMongoClient>();
+            var clientSettings = new MongoClientSettings();
+            mockClient.SetupGet(m => m.Settings).Returns(clientSettings);
             var mockCluster = new Mock<ICluster>();
             mockClient.SetupGet(m => m.Cluster).Returns(mockCluster.Object);
             var settings = new MongoDatabaseSettings();
@@ -870,7 +1298,14 @@ namespace MongoDB.Driver
                 new DatabaseNamespace("foo"),
                 settings,
                 new Mock<ICluster>().Object,
-                _operationExecutor);
+                operationExecutor ?? _operationExecutor);
+        }
+
+        private RenderedPipelineDefinition<TOutput> RenderPipeline<TOutput>(IMongoDatabase dataabse, PipelineDefinition<NoPipelineInput, TOutput> pipeline)
+        {
+            var inputSerializer = NoPipelineInputSerializer.Instance;
+            var serializerRegistry = BsonSerializer.SerializerRegistry;
+            return pipeline.Render(inputSerializer, serializerRegistry);
         }
 
         private static void VerifySessionAndCancellationToken<TDocument>(MockOperationExecutor.ReadCall<TDocument> call, IClientSessionHandle session, CancellationToken cancellationToken)

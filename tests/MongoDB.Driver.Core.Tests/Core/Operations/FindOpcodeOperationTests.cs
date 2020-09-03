@@ -121,7 +121,9 @@ namespace MongoDB.Driver.Core.Operations
             subject.Hint.Should().BeNull();
             subject.Limit.Should().NotHaveValue();
             subject.Max.Should().BeNull();
+#pragma warning disable 618
             subject.MaxScan.Should().NotHaveValue();
+#pragma warning restore
             subject.MaxTime.Should().NotHaveValue();
             subject.Modifiers.Should().BeNull();
             subject.Min.Should().BeNull();
@@ -130,7 +132,9 @@ namespace MongoDB.Driver.Core.Operations
             subject.Projection.Should().BeNull();
             subject.ShowRecordId.Should().NotHaveValue();
             subject.Skip.Should().NotHaveValue();
+#pragma warning disable 618
             subject.Snapshot.Should().NotHaveValue();
+#pragma warning restore
             subject.Sort.Should().BeNull();
         }
 
@@ -278,7 +282,9 @@ namespace MongoDB.Driver.Core.Operations
             [Values(1, 5, 6, 12)] int limit)
         {
             RequireServer.Check().VersionLessThan("3.2.0");
-            var collectionNamespace = CoreTestConfiguration.GetCollectionNamespaceForTestMethod();
+            var collectionNamespace = CoreTestConfiguration.GetCollectionNamespaceForTestMethod(
+                className: GetType().Name,
+                methodName: nameof(ExecuteAsync_should_find_all_the_documents_matching_the_query_when_limit_is_used));
             for (var id = 1; id <= limit + 1; id++)
             {
                 var document = new BsonDocument { { "id", id }, { "filler", new string('x', 1000000) } }; // about 1MB big
@@ -344,7 +350,7 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
-            Func<Task> action = () => subject.ExecuteAsync(null, CancellationToken.None);
+            Func<Task> action = () => subject.ExecuteAsync(binding: null, CancellationToken.None);
 
             action.ShouldThrow<ArgumentNullException>().And.ParamName.Should().Be("binding");
         }
@@ -443,8 +449,10 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
+#pragma warning disable 618
             subject.MaxScan = value;
             var result = subject.MaxScan;
+#pragma warning restore
 
             result.Should().Be(value);
         }
@@ -624,9 +632,11 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
+#pragma warning disable 618
             subject.Snapshot = value;
             var result = subject.Snapshot;
-
+#pragma warning restore
+        
             result.Should().Be(value);
         }
 

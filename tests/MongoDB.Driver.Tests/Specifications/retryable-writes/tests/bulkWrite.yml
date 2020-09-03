@@ -1,12 +1,16 @@
+runOn:
+    -
+        minServerVersion: "3.6"
+        topology: ["replicaset"]
+
 data:
     - { _id: 1, x: 11 }
-
-minServerVersion: '3.6'
 
 tests:
     -
         description: "First command is retried"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
         operation:
             name: "bulkWrite"
@@ -29,6 +33,7 @@ tests:
         outcome:
             result:
                 deletedCount: 1
+                insertedCount: 1
                 insertedIds: { 0: 2 }
                 matchedCount: 1
                 modifiedCount: 1
@@ -43,6 +48,7 @@ tests:
         # fail on the first attempt and succeed on the second, retry attempt.
         description: "All commands are retried"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 7 }
         operation:
             name: "bulkWrite"
@@ -84,6 +90,7 @@ tests:
         outcome:
             result:
                 deletedCount: 1
+                insertedCount: 3
                 insertedIds: { 0: 2, 2: 3, 4: 5 }
                 matchedCount: 2
                 modifiedCount: 2
@@ -98,6 +105,7 @@ tests:
     -
         description: "Both commands are retried after their first statement fails"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 2 }
         operation:
             name: "bulkWrite"
@@ -121,6 +129,7 @@ tests:
         outcome:
             result:
                 deletedCount: 0
+                insertedCount: 1
                 insertedIds: { 0: 2 }
                 matchedCount: 2
                 modifiedCount: 2
@@ -133,6 +142,7 @@ tests:
     -
         description: "Second command is retried after its second statement fails"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { skip: 2 }
         operation:
             name: "bulkWrite"
@@ -156,6 +166,7 @@ tests:
         outcome:
             result:
                 deletedCount: 0
+                insertedCount: 1
                 insertedIds: { 0: 2 }
                 matchedCount: 2
                 modifiedCount: 2
@@ -168,6 +179,7 @@ tests:
     -
         description: "BulkWrite with unordered execution"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
         operation:
             name: "bulkWrite"
@@ -185,6 +197,7 @@ tests:
         outcome:
             result:
                 deletedCount: 0
+                insertedCount: 2
                 insertedIds: { 0: 2, 1: 3 }
                 matchedCount: 0
                 modifiedCount: 0
@@ -198,6 +211,7 @@ tests:
     -
         description: "First insertOne is never committed"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 2 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -222,6 +236,7 @@ tests:
             error: true
             result:
                 deletedCount: 0
+                insertedCount: 0
                 insertedIds: { }
                 matchedCount: 0
                 modifiedCount: 0
@@ -233,6 +248,7 @@ tests:
     -
         description: "Second updateOne is never committed"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { skip: 1 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -257,6 +273,7 @@ tests:
             error: true
             result:
                 deletedCount: 0
+                insertedCount: 1
                 insertedIds: { 0: 2 }
                 matchedCount: 0
                 modifiedCount: 0
@@ -269,6 +286,7 @@ tests:
     -
         description: "Third updateOne is never committed"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { skip: 2 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -294,7 +312,80 @@ tests:
             error: true
             result:
                 deletedCount: 0
-                insertedIds: { 0: 2 }
+                insertedCount: 1
+                insertedIds: { 1: 2 }
+                matchedCount: 1
+                modifiedCount: 1
+                upsertedCount: 0
+                upsertedIds: { }
+            collection:
+                data:
+                    - { _id: 1, x: 12 }
+                    - { _id: 2, x: 22 }
+    -
+        # The onPrimaryTransactionalWrite fail point only triggers for write
+        # operations that include a transaction ID. Therefore, it will not
+        # affect the initial deleteMany and will trigger once (and only once)
+        # for the first insertOne attempt.
+        description: "Single-document write following deleteMany is retried"
+        failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
+            mode: { times: 1 }
+            data: { failBeforeCommitExceptionCode: 1 }
+        operation:
+            name: "bulkWrite"
+            arguments:
+                requests:
+                    -
+                        name: "deleteMany"
+                        arguments:
+                            filter: { x: 11 }
+                    -
+                        name: "insertOne"
+                        arguments:
+                            document: { _id: 2, x: 22 }
+                options: { ordered: true }
+        outcome:
+            result:
+                deletedCount: 1
+                insertedCount: 1
+                insertedIds: { 1: 2 }
+                matchedCount: 0
+                modifiedCount: 0
+                upsertedCount: 0
+                upsertedIds: { }
+            collection:
+                data:
+                    - { _id: 2, x: 22 }
+    -
+        # The onPrimaryTransactionalWrite fail point only triggers for write
+        # operations that include a transaction ID. Therefore, it will not
+        # affect the initial updateMany and will trigger once (and only once)
+        # for the first insertOne attempt.
+        description: "Single-document write following updateMany is retried"
+        failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
+            mode: { times: 1 }
+            data: { failBeforeCommitExceptionCode: 1 }
+        operation:
+            name: "bulkWrite"
+            arguments:
+                requests:
+                    -
+                        name: "updateMany"
+                        arguments:
+                            filter: { x: 11 }
+                            update: { $inc: { x : 1 }}
+                    -
+                        name: "insertOne"
+                        arguments:
+                            document: { _id: 2, x: 22 }
+                options: { ordered: true }
+        outcome:
+            result:
+                deletedCount: 0
+                insertedCount: 1
+                insertedIds: { 1: 2 }
                 matchedCount: 1
                 modifiedCount: 1
                 upsertedCount: 0

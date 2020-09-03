@@ -14,12 +14,14 @@
 */
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Operations;
+using MongoDB.Driver.Core.Servers;
 
 namespace MongoDB.Driver.Core.Bindings
 {
@@ -34,6 +36,7 @@ namespace MongoDB.Driver.Core.Bindings
         private readonly IClusterClock _clusterClock = new ClusterClock();
         private CoreTransaction _currentTransaction;
         private bool _disposed;
+        private bool _isCommitTransactionInProgress;
         private readonly IOperationClock _operationClock = new OperationClock();
         private readonly CoreSessionOptions _options;
         private readonly ICoreServerSession _serverSession;
@@ -56,7 +59,12 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         // public properties
-        /// <inheritdoc />
+        /// <summary>
+        /// Gets the cluster.
+        /// </summary>
+        /// <value>
+        /// The cluster.
+        /// </value>
         public ICluster Cluster => _cluster;
 
         /// <inheritdoc />
@@ -72,10 +80,34 @@ namespace MongoDB.Driver.Core.Bindings
         public bool IsCausallyConsistent => _options.IsCausallyConsistent;
 
         /// <inheritdoc />
+        public bool IsDirty => _serverSession.IsDirty;
+
+        /// <inheritdoc />
         public bool IsImplicit => _options.IsImplicit;
 
         /// <inheritdoc />
-        public bool IsInTransaction => _currentTransaction != null;
+        public bool IsInTransaction
+        {
+            get
+            {
+                if (_currentTransaction != null)
+                {
+                    switch (_currentTransaction.State)
+                    {
+                        case CoreTransactionState.Aborted:
+                            return false;
+
+                        case CoreTransactionState.Committed:
+                            return _isCommitTransactionInProgress; // when retrying a commit we are temporarily "back in" the already committed transaction
+
+                        default:
+                            return true;
+                    }
+                }
+
+                return false;
+            }
+        }
 
         /// <inheritdoc />
         public BsonTimestamp OperationTime => _operationClock.OperationTime;
@@ -90,11 +122,11 @@ namespace MongoDB.Driver.Core.Bindings
         /// <inheritdoc />
         public void AbortTransaction(CancellationToken cancellationToken = default(CancellationToken))
         {
-            EnsureIsInTransaction(nameof(AbortTransaction));
+            EnsureAbortTransactionCanBeCalled(nameof(AbortTransaction));
 
             try
             {
-                if (_currentTransaction.StatementId == 0)
+                if (_currentTransaction.IsEmpty)
                 {
                     return;
                 }
@@ -104,10 +136,6 @@ namespace MongoDB.Driver.Core.Bindings
                     var firstAttempt = CreateAbortTransactionOperation();
                     ExecuteEndTransactionOnPrimary(firstAttempt, cancellationToken);
                     return;
-                }
-                catch (Exception exception) when (ShouldIgnoreAbortTransactionException(exception))
-                {
-                    return; // ignore exception and return
                 }
                 catch (Exception exception) when (ShouldRetryEndTransactionException(exception))
                 {
@@ -130,18 +158,18 @@ namespace MongoDB.Driver.Core.Bindings
             }
             finally
             {
-                _currentTransaction = null;
+                _currentTransaction.SetState(CoreTransactionState.Aborted);
             }
         }
 
         /// <inheritdoc />
         public async Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
         {
-            EnsureIsInTransaction(nameof(AbortTransaction));
+            EnsureAbortTransactionCanBeCalled(nameof(AbortTransaction));
 
             try
             {
-                if (_currentTransaction.StatementId == 0)
+                if (_currentTransaction.IsEmpty)
                 {
                     return;
                 }
@@ -151,10 +179,6 @@ namespace MongoDB.Driver.Core.Bindings
                     var firstAttempt = CreateAbortTransactionOperation();
                     await ExecuteEndTransactionOnPrimaryAsync(firstAttempt, cancellationToken).ConfigureAwait(false);
                     return;
-                }
-                catch (Exception exception) when (ShouldIgnoreAbortTransactionException(exception))
-                {
-                    return; // ignore exception and return
                 }
                 catch (Exception exception) when (ShouldRetryEndTransactionException(exception))
                 {
@@ -177,7 +201,36 @@ namespace MongoDB.Driver.Core.Bindings
             }
             finally
             {
-                _currentTransaction = null;
+                _currentTransaction.SetState(CoreTransactionState.Aborted);
+            }
+        }
+
+        /// <inheritdoc />
+        public void AboutToSendCommand()
+        {
+            if (_currentTransaction != null)
+            {
+                switch (_currentTransaction.State)
+                {
+                    case CoreTransactionState.Starting: // Starting changes to InProgress after the message is sent to the server
+                    case CoreTransactionState.InProgress:
+                        return;
+
+                    case CoreTransactionState.Aborted:
+                        _currentTransaction = null;
+                        break;
+
+                    case CoreTransactionState.Committed:
+                        // don't set to null when retrying a commit
+                        if (!_isCommitTransactionInProgress)
+                        {
+                            _currentTransaction = null;
+                        }
+                        return;
+
+                    default:
+                        throw new Exception($"Unexpected transaction state: {_currentTransaction.State}.");
+                }
             }
         }
 
@@ -202,64 +255,70 @@ namespace MongoDB.Driver.Core.Bindings
         /// <inheritdoc />
         public void CommitTransaction(CancellationToken cancellationToken = default(CancellationToken))
         {
-            EnsureIsInTransaction(nameof(CommitTransaction));
+            EnsureCommitTransactionCanBeCalled(nameof(CommitTransaction));
 
             try
             {
-                if (_currentTransaction.StatementId == 0)
+                _isCommitTransactionInProgress = true;
+                if (_currentTransaction.IsEmpty)
                 {
                     return;
                 }
 
                 try
                 {
-                    var firstAttempt = CreateCommitTransactionOperation();
+                    var firstAttempt = CreateCommitTransactionOperation(IsFirstCommitAttemptRetry());
                     ExecuteEndTransactionOnPrimary(firstAttempt, cancellationToken);
                     return;
                 }
                 catch (Exception exception) when (ShouldRetryEndTransactionException(exception))
                 {
-                    // ignore exception and retry
+                    // unpin server if needed, then ignore exception and retry
+                    TransactionHelper.UnpinServerIfNeededOnRetryableCommitException(_currentTransaction, exception);
                 }
 
-                var secondAttempt = CreateCommitTransactionOperation();
+                var secondAttempt = CreateCommitTransactionOperation(isCommitRetry: true);
                 ExecuteEndTransactionOnPrimary(secondAttempt, cancellationToken);
             }
             finally
             {
-                _currentTransaction = null;
+                _isCommitTransactionInProgress = false;
+                _currentTransaction.SetState(CoreTransactionState.Committed);
             }
         }
 
         /// <inheritdoc />
         public async Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
         {
-            EnsureIsInTransaction(nameof(CommitTransaction));
+            EnsureCommitTransactionCanBeCalled(nameof(CommitTransaction));
 
             try
             {
-                if (_currentTransaction.StatementId == 0)
+                _isCommitTransactionInProgress = true;
+                if (_currentTransaction.IsEmpty)
                 {
                     return;
                 }
 
                 try
                 {
-                    var firstAttempt = CreateCommitTransactionOperation();
+                    var firstAttempt = CreateCommitTransactionOperation(IsFirstCommitAttemptRetry());
                     await ExecuteEndTransactionOnPrimaryAsync(firstAttempt, cancellationToken).ConfigureAwait(false);
                     return;
                 }
                 catch (Exception exception) when (ShouldRetryEndTransactionException(exception))
                 {
-                    // ignore exception and retry
+                    // unpin server if needed, then ignore exception and retry
+                    TransactionHelper.UnpinServerIfNeededOnRetryableCommitException(_currentTransaction, exception);
                 }
 
-                var secondAttempt = CreateCommitTransactionOperation();
+                var secondAttempt = CreateCommitTransactionOperation(isCommitRetry: true);
                 await ExecuteEndTransactionOnPrimaryAsync(secondAttempt, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                _currentTransaction = null;
+                _isCommitTransactionInProgress = false;
+                _currentTransaction.SetState(CoreTransactionState.Committed);
             }
         }
 
@@ -270,13 +329,19 @@ namespace MongoDB.Driver.Core.Bindings
             {
                 if (_currentTransaction != null)
                 {
-                    try
+                    switch (_currentTransaction.State)
                     {
-                        AbortTransaction(CancellationToken.None);
-                    }
-                    catch
-                    {
-                        // ignore exceptions
+                        case CoreTransactionState.Starting:
+                        case CoreTransactionState.InProgress:
+                            try
+                            {
+                                AbortTransaction(CancellationToken.None);
+                            }
+                            catch
+                            {
+                                // ignore exceptions
+                            }
+                            break;
                     }
                 }
 
@@ -286,20 +351,24 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public void MarkDirty()
+        {
+            _serverSession.MarkDirty();
+        }
+
+        /// <inheritdoc />
         public void StartTransaction(TransactionOptions transactionOptions = null)
         {
-            if (_currentTransaction != null)
-            {
-                throw new InvalidOperationException("Transaction already in progress.");
-            }
+            EnsureStartTransactionCanBeCalled();
 
             var transactionNumber = AdvanceTransactionNumber();
-            var readConcern = transactionOptions?.ReadConcern ?? _options.DefaultTransactionOptions?.ReadConcern ?? ReadConcern.Default;
-            var writeConcern = transactionOptions?.WriteConcern ?? _options.DefaultTransactionOptions?.WriteConcern ?? new WriteConcern();
-            var effectiveTransactionOptions = new TransactionOptions(readConcern, writeConcern);
-            var transaction = new CoreTransaction(transactionNumber, effectiveTransactionOptions);
+            var effectiveTransactionOptions = GetEffectiveTransactionOptions(transactionOptions);
+            if (!effectiveTransactionOptions.WriteConcern.IsAcknowledged)
+            {
+                throw new InvalidOperationException("Transactions do not support unacknowledged write concerns.");
+            }
 
-            _currentTransaction = transaction;
+            _currentTransaction = new CoreTransaction(transactionNumber, effectiveTransactionOptions);
         }
 
         /// <inheritdoc />
@@ -311,20 +380,101 @@ namespace MongoDB.Driver.Core.Bindings
         // private methods
         private IReadOperation<BsonDocument> CreateAbortTransactionOperation()
         {
-            return new AbortTransactionOperation(GetTransactionWriteConcern());
+            return new AbortTransactionOperation(_currentTransaction.RecoveryToken, GetTransactionWriteConcern());
         }
 
-        private IReadOperation<BsonDocument> CreateCommitTransactionOperation()
+        private IReadOperation<BsonDocument> CreateCommitTransactionOperation(bool isCommitRetry)
         {
-            return new CommitTransactionOperation(GetTransactionWriteConcern());
+            var writeConcern = GetCommitTransactionWriteConcern(isCommitRetry);
+            var maxCommitTime = _currentTransaction.TransactionOptions.MaxCommitTime;
+            return new CommitTransactionOperation(_currentTransaction.RecoveryToken, writeConcern) { MaxCommitTime = maxCommitTime };
         }
 
-        private void EnsureIsInTransaction(string methodName)
+        private void EnsureAbortTransactionCanBeCalled(string methodName)
         {
-            this.AutoStartTransactionIfApplicable();
             if (_currentTransaction == null)
             {
-                throw new InvalidOperationException("No transaction started.");
+                throw new InvalidOperationException($"{methodName} cannot be called when no transaction started.");
+            }
+
+            switch (_currentTransaction.State)
+            {
+                case CoreTransactionState.Starting:
+                case CoreTransactionState.InProgress:
+                    return;
+
+                case CoreTransactionState.Aborted:
+                    throw new InvalidOperationException($"Cannot call {methodName} twice.");
+
+                case CoreTransactionState.Committed:
+                    throw new InvalidOperationException($"Cannot call {methodName} after calling CommitTransaction.");
+
+                default:
+                    throw new Exception($"{methodName} called in unexpected transaction state: {_currentTransaction.State}.");
+            }
+        }
+
+        private void EnsureCommitTransactionCanBeCalled(string methodName)
+        {
+            if (_currentTransaction == null)
+            {
+                throw new InvalidOperationException($"{methodName} cannot be called when no transaction started.");
+            }
+
+            switch (_currentTransaction.State)
+            {
+                case CoreTransactionState.Starting:
+                case CoreTransactionState.InProgress:
+                case CoreTransactionState.Committed:
+                    return;
+
+                case CoreTransactionState.Aborted:
+                    throw new InvalidOperationException($"Cannot call {methodName} after calling AbortTransaction.");
+
+                default:
+                    throw new Exception($"{methodName} called in unexpected transaction state: {_currentTransaction.State}.");
+            }
+        }
+
+        private void EnsureStartTransactionCanBeCalled()
+        {
+            if (_currentTransaction == null)
+            {
+                EnsureTransactionsAreSupported();
+            }
+            else
+            {
+                switch (_currentTransaction.State)
+                {
+                    case CoreTransactionState.Aborted:
+                    case CoreTransactionState.Committed:
+                        break;
+
+                    default:
+                        throw new InvalidOperationException("Transaction already in progress.");
+                }
+            }
+        }
+
+        private void EnsureTransactionsAreSupported()
+        {
+            var connectedDataBearingServers = _cluster.Description.Servers.Where(s => s.State == ServerState.Connected && s.IsDataBearing).ToList();
+
+            if (connectedDataBearingServers.Count == 0)
+            {
+                throw new NotSupportedException("StartTransaction cannot determine if transactions are supported because there are no connected servers.");
+            }
+
+            foreach (var connectedDataBearingServer in connectedDataBearingServers)
+            {
+                if (connectedDataBearingServer.Type == ServerType.ShardRouter)
+                {
+                    Feature.ShardedTransactions.ThrowIfNotSupported(connectedDataBearingServer.Version);
+                }
+                else
+                {
+                    Feature.Transactions.ThrowIfNotSupported(connectedDataBearingServer.Version);
+                }
             }
         }
 
@@ -346,6 +496,15 @@ namespace MongoDB.Driver.Core.Bindings
             }
         }
 
+        private TransactionOptions GetEffectiveTransactionOptions(TransactionOptions transactionOptions)
+        {
+            var readConcern = transactionOptions?.ReadConcern ?? _options.DefaultTransactionOptions?.ReadConcern ?? ReadConcern.Default;
+            var readPreference = transactionOptions?.ReadPreference ?? _options.DefaultTransactionOptions?.ReadPreference ?? ReadPreference.Primary;
+            var writeConcern = transactionOptions?.WriteConcern ?? _options.DefaultTransactionOptions?.WriteConcern ?? new WriteConcern();
+            var maxCommitTime = transactionOptions?.MaxCommitTime ?? _options.DefaultTransactionOptions?.MaxCommitTime;
+            return new TransactionOptions(readConcern, readPreference, writeConcern, maxCommitTime);
+        }
+
         private WriteConcern GetTransactionWriteConcern()
         {
             return
@@ -354,15 +513,25 @@ namespace MongoDB.Driver.Core.Bindings
                 WriteConcern.WMajority;
         }
 
-        private bool ShouldIgnoreAbortTransactionException(Exception exception)
+        private WriteConcern GetCommitTransactionWriteConcern(bool isCommitRetry)
         {
-            var commandException = exception as MongoCommandException;
-            if (commandException != null)
+            var writeConcern = GetTransactionWriteConcern();
+            if (isCommitRetry)
             {
-                return true;
+                writeConcern = writeConcern.With(mode: "majority");
+                if (writeConcern.WTimeout == null)
+                {
+                    writeConcern = writeConcern.With(wTimeout: TimeSpan.FromMilliseconds(10000));
+                }
             }
 
-            return false;
+            return writeConcern;
+        }
+
+        private bool IsFirstCommitAttemptRetry()
+        {
+            // According to the spec, trying to commit again while the state is "committed" is considered a retry.
+            return _currentTransaction.State == CoreTransactionState.Committed;
         }
 
         private bool ShouldRetryEndTransactionException(Exception exception)

@@ -17,7 +17,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
-using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
 
 namespace MongoDB.Driver.Core.Bindings
@@ -73,6 +72,16 @@ namespace MongoDB.Driver.Core.Bindings
             {
                 ThrowIfDisposed();
                 return _wrapped.Id;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual bool IsDirty
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.IsDirty;
             }
         }
 
@@ -167,6 +176,13 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public virtual void AboutToSendCommand()
+        {
+            ThrowIfDisposed();
+            _wrapped.AboutToSendCommand();
+        }
+
+        /// <inheritdoc />
         public virtual void AdvanceClusterTime(BsonDocument newClusterTime)
         {
             ThrowIfDisposed();
@@ -205,6 +221,13 @@ namespace MongoDB.Driver.Core.Bindings
         {
             Dispose(true);
             GC.SuppressFinalize(this);
+        }
+
+        /// <inheritdoc />
+        public virtual void MarkDirty()
+        {
+            ThrowIfDisposed();
+            _wrapped.MarkDirty();
         }
 
         /// <inheritdoc />
