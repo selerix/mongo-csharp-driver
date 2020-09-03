@@ -14,17 +14,27 @@
 */
 
 using System;
+using System.IO;
 using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using MongoDB.Bson;
+using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters;
+using MongoDB.Driver.Core.Clusters.ServerSelectors;
 using MongoDB.Driver.Core.Configuration;
 using MongoDB.Driver.Core.ConnectionPools;
 using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Events;
+using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
+using MongoDB.Driver.Core.WireProtocol;
+using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 using Moq;
 using Xunit;
 
@@ -139,6 +149,61 @@ namespace MongoDB.Driver.Core.Servers
             _capturedEvents.Next().Should().BeOfType<ServerClosedEvent>();
             _capturedEvents.Any().Should().BeFalse();
         }
+        
+        [Theory]
+        [ParameterAttributeData]
+        public void GetChannel_should_clear_connection_pool_when_opening_connection_throws_MongoAuthenticationException(
+            [Values(false, true)] bool async)
+        {      
+            var connectionId = new ConnectionId(new ServerId(_clusterId, _endPoint));
+            var mockConnectionHandle  = new Mock<IConnectionHandle>();
+            mockConnectionHandle 
+                .Setup(c => c.Open(It.IsAny<CancellationToken>()))
+                .Throws(new MongoAuthenticationException(connectionId, "Invalid login."));
+            mockConnectionHandle 
+                .Setup(c => c.OpenAsync(It.IsAny<CancellationToken>()))
+                .Throws(new MongoAuthenticationException(connectionId, "Invalid login."));
+
+            var mockConnectionPool = new Mock<IConnectionPool>();
+            mockConnectionPool
+                .Setup(p => p.AcquireConnection(It.IsAny<CancellationToken>()))
+                .Returns(mockConnectionHandle .Object);
+            mockConnectionPool
+                .Setup(p => p.AcquireConnectionAsync(It.IsAny<CancellationToken>()))
+                .Returns(Task.FromResult(mockConnectionHandle .Object));
+            mockConnectionPool.Setup(p => p.Clear());
+
+            var mockConnectionPoolFactory = new Mock<IConnectionPoolFactory>();
+            mockConnectionPoolFactory
+                .Setup(f => f.CreateConnectionPool(It.IsAny<ServerId>(), _endPoint))
+                .Returns(mockConnectionPool.Object);
+
+            var server = new Server(
+                _clusterId, 
+                _clusterClock, 
+                _clusterConnectionMode, 
+                _settings, 
+                _endPoint, 
+                mockConnectionPoolFactory.Object, 
+                _mockServerMonitorFactory.Object, 
+                _capturedEvents);
+            server.Initialize();
+
+            var exception = Record.Exception(() =>
+            {
+                if (async)
+                {
+                    server.GetChannelAsync(CancellationToken.None).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    server.GetChannel(CancellationToken.None);
+                }
+            });
+
+            exception.Should().BeOfType<MongoAuthenticationException>();
+            mockConnectionPool.Verify(p=>p.Clear(), Times.Once());
+        }
 
         [Theory]
         [ParameterAttributeData]
@@ -244,6 +309,314 @@ namespace MongoDB.Driver.Core.Servers
             _mockServerMonitor.Raise(m => m.DescriptionChanged += null, new ServerDescriptionChangedEventArgs(description, description));
 
             _mockConnectionPool.Verify(p => p.Clear(), Times.Once);
+        }
+
+        [Theory]
+        [InlineData((ServerErrorCode)(-1), false)]
+        [InlineData(ServerErrorCode.NotMaster, true)]
+        [InlineData(ServerErrorCode.NotMasterNoSlaveOk, true)]
+        [InlineData(ServerErrorCode.NotMasterOrSecondary, false)]
+        internal void IsNotMaster_should_return_expected_result_for_code(ServerErrorCode code, bool expectedResult)
+        {
+            _subject.Initialize();
+
+            var result = _subject.IsNotMaster(code, null);
+
+            result.Should().Be(expectedResult);
+            if (result)
+            {
+                _subject.IsRecovering(code, null).Should().BeFalse();
+            }
+        }
+
+        [Theory]
+        [InlineData(null, false)]
+        [InlineData("abc", false)]
+        [InlineData("not master", true)]
+        [InlineData("not master or secondary", false)]
+        internal void IsNotMaster_should_return_expected_result_for_message(string message, bool expectedResult)
+        {
+            _subject.Initialize();
+
+            var result = _subject.IsNotMaster((ServerErrorCode)(-1), message);
+
+            result.Should().Be(expectedResult);
+            if (result)
+            {
+                _subject.IsRecovering((ServerErrorCode)(-1), message).Should().BeFalse();
+            }
+        }
+
+        [Theory]
+        [InlineData((ServerErrorCode)(-1), false)]
+        [InlineData(ServerErrorCode.NotMaster, true)]
+        [InlineData(ServerErrorCode.InterruptedAtShutdown, true)]
+        internal void IsNotMasterOrRecovering_should_return_expected_result(ServerErrorCode code, bool expectedResult)
+        {
+            _subject.Initialize();
+
+            var result = _subject.IsNotMasterOrRecovering(code, null);
+
+            result.Should().Be(expectedResult);
+        }
+
+        [Theory]
+        [InlineData((ServerErrorCode)(-1), false)]
+        [InlineData(ServerErrorCode.InterruptedAtShutdown, true)]
+        [InlineData(ServerErrorCode.InterruptedDueToReplStateChange, true)]
+        [InlineData(ServerErrorCode.NotMasterOrSecondary, true)]
+        [InlineData(ServerErrorCode.PrimarySteppedDown, true)]
+        [InlineData(ServerErrorCode.ShutdownInProgress, true)]
+        internal void IsRecovering_should_return_expected_result_for_code(ServerErrorCode code, bool expectedResult)
+        {
+            _subject.Initialize();
+
+            var result = _subject.IsRecovering(code, null);
+
+            result.Should().Be(expectedResult);
+            if (result)
+            {
+                _subject.IsNotMaster(code, null).Should().BeFalse();
+            }
+        }
+
+        [Theory]
+        [InlineData(null, false)]
+        [InlineData("abc", false)]
+        [InlineData("node is recovering", true)]
+        [InlineData("not master or secondary", true)]
+        internal void IsRecovering_should_return_expected_result_for_message(string message, bool expectedResult)
+        {
+            _subject.Initialize();
+
+            var result = _subject.IsRecovering((ServerErrorCode)(-1), message);
+
+            result.Should().Be(expectedResult);
+            if (result)
+            {
+                _subject.IsNotMaster((ServerErrorCode)(-1), message).Should().BeFalse();
+            }
+        }
+
+        [Theory]
+        [InlineData(nameof(EndOfStreamException), true)]
+        [InlineData(nameof(Exception), false)]
+        [InlineData(nameof(IOException), true)]
+        [InlineData(nameof(MongoConnectionException), true)]
+        [InlineData(nameof(MongoNodeIsRecoveringException), true)]
+        [InlineData(nameof(MongoNotPrimaryException), true)]
+        [InlineData(nameof(SocketException), true)]
+        [InlineData(nameof(TimeoutException), false)]
+        [InlineData(nameof(MongoExecutionTimeoutException), false)]
+        internal void ShouldInvalidateServer_should_return_expected_result_for_exceptionType(string exceptionTypeName, bool expectedResult)
+        {
+            _subject.Initialize();
+            Exception exception;
+            var clusterId = new ClusterId(1);
+            var serverId = new ServerId(clusterId, new DnsEndPoint("localhost", 27017));
+            var connectionId = new ConnectionId(serverId);
+            var command = new BsonDocument("command", 1);
+            var commandResult = new BsonDocument("ok", 1);
+            switch (exceptionTypeName)
+            {
+                case nameof(EndOfStreamException): exception = new EndOfStreamException(); break;
+                case nameof(Exception): exception = new Exception(); break;
+                case nameof(IOException): exception = new IOException(); break;
+                case nameof(MongoConnectionException): exception = new MongoConnectionException(connectionId, "message"); break;
+                case nameof(MongoNodeIsRecoveringException): exception = new MongoNodeIsRecoveringException(connectionId, command, commandResult); break;
+                case nameof(MongoNotPrimaryException): exception = new MongoNotPrimaryException(connectionId, command, commandResult); break;
+                case nameof(SocketException): exception = new SocketException(); break;
+                case nameof(TimeoutException): exception = new TimeoutException(); break;
+                case nameof(MongoExecutionTimeoutException): exception = new MongoExecutionTimeoutException(connectionId, "message"); break;
+                default: throw new Exception($"Invalid exceptionTypeName: {exceptionTypeName}.");
+            }
+
+            var result = _subject.ShouldInvalidateServer(exception);
+
+            result.Should().Be(expectedResult);
+        }
+
+        [Theory]
+        [InlineData(null, null, false)]
+        [InlineData((ServerErrorCode)(-1), null, false)]
+        [InlineData(ServerErrorCode.NotMaster, null, true)]
+        [InlineData(ServerErrorCode.InterruptedAtShutdown, null, true)]
+        [InlineData(null, "abc", false)]
+        [InlineData(null, "not master", true)]
+        [InlineData(null, "not master or secondary", true)]
+        [InlineData(null, "node is recovering", true)]
+        internal void ShouldInvalidateServer_should_return_expected_result_for_MongoCommandException(ServerErrorCode? code, string message, bool expectedResult)
+        {
+            _subject.Initialize();
+            var clusterId = new ClusterId(1);
+            var serverId = new ServerId(clusterId, new DnsEndPoint("localhost", 27017));
+            var connectionId = new ConnectionId(serverId);
+            var command = new BsonDocument("command", 1);
+            var commandResult = new BsonDocument
+            {
+                { "ok", 0 },
+                { "code", () => (int)code.Value, code.HasValue },
+                { "errmsg", message, message != null }
+            };
+            var exception = new MongoCommandException(connectionId, "message", command, commandResult);
+
+            var result = _subject.ShouldInvalidateServer(exception);
+
+            result.Should().Be(expectedResult);
+        }
+
+        [Theory]
+        [InlineData(null, null, false)]
+        [InlineData((ServerErrorCode)(-1), null, false)]
+        [InlineData(ServerErrorCode.NotMaster, null, true)]
+        [InlineData(ServerErrorCode.InterruptedAtShutdown, null, true)]
+        [InlineData(null, "abc", false)]
+        [InlineData(null, "not master", true)]
+        [InlineData(null, "not master or secondary", true)]
+        [InlineData(null, "node is recovering", true)]
+        internal void ShouldInvalidateServer_should_return_expected_result_for_MongoWriteConcernException(ServerErrorCode? code, string message, bool expectedResult)
+        {
+            _subject.Initialize();
+            var clusterId = new ClusterId(1);
+            var serverId = new ServerId(clusterId, new DnsEndPoint("localhost", 27017));
+            var connectionId = new ConnectionId(serverId);
+            var command = new BsonDocument("command", 1);
+            var commandResult = new BsonDocument
+            {
+                { "ok", 1 },
+                { "writeConcernError", new BsonDocument
+                    {
+                        { "code", () => (int)code.Value, code.HasValue },
+                        { "errmsg", message, message != null }
+                    }
+                }
+            };
+            var writeConcernResult = new WriteConcernResult(commandResult);
+            var exception = new MongoWriteConcernException(connectionId, "message", writeConcernResult);
+
+            var result = _subject.ShouldInvalidateServer(exception);
+
+            result.Should().Be(expectedResult);
+        }
+    }
+
+    public class ServerChannelTests
+    {
+        [SkippableTheory]
+        [InlineData(1, 2, 2)]
+        [InlineData(2, 1, 2)]
+        public void Command_should_send_the_greater_of_the_session_and_cluster_cluster_times(long sessionTimestamp, long clusterTimestamp, long expectedTimestamp)
+        {
+            RequireServer.Check().VersionGreaterThanOrEqualTo("3.6").ClusterTypes(ClusterType.ReplicaSet, ClusterType.Sharded);
+            var sessionClusterTime = new BsonDocument("clusterTime", new BsonTimestamp(sessionTimestamp));
+            var clusterClusterTime = new BsonDocument("clusterTime", new BsonTimestamp(clusterTimestamp));
+            var expectedClusterTime = new BsonDocument("clusterTime", new BsonTimestamp(expectedTimestamp));
+
+            var eventCapturer = new EventCapturer().Capture<CommandStartedEvent>(e => e.CommandName == "ping");
+            using (var cluster = CoreTestConfiguration.CreateCluster(b => b.Subscribe(eventCapturer)))
+            using (var session = cluster.StartSession())
+            {
+                var cancellationToken = CancellationToken.None;
+                var server = (Server)cluster.SelectServer(WritableServerSelector.Instance, cancellationToken);
+                using (var channel = server.GetChannel(cancellationToken))
+                {
+                    session.AdvanceClusterTime(sessionClusterTime);
+                    server.ClusterClock.AdvanceClusterTime(clusterClusterTime);
+
+                    var command = BsonDocument.Parse("{ ping : 1 }");
+                    try
+                    {
+                        channel.Command<BsonDocument>(
+                            session,
+                            ReadPreference.Primary,
+                            DatabaseNamespace.Admin,
+                            command,
+                            null, // payloads
+                            NoOpElementNameValidator.Instance,
+                            null, // additionalOptions
+                            null, // postWriteAction
+                            CommandResponseHandling.Return,
+                            BsonDocumentSerializer.Instance,
+                            new MessageEncoderSettings(),
+                            cancellationToken);
+                    }
+                    catch (MongoCommandException ex)
+                    {
+                        // we're expecting the command to fail because the $clusterTime we sent is not properly signed
+                        // the point of this test is just to assert that the driver sent the higher of the session and cluster clusterTimes
+                        ex.Message.Should().Contain("Missing expected field \"signature\"");
+                    }
+                }
+            }
+
+            var commandStartedEvent = eventCapturer.Next().Should().BeOfType<CommandStartedEvent>().Subject;
+            var actualCommand = commandStartedEvent.Command;
+            var actualClusterTime = actualCommand["$clusterTime"].AsBsonDocument;
+            actualClusterTime.Should().Be(expectedClusterTime);
+        }
+
+        [SkippableFact]
+        public void Command_should_update_the_session_and_cluster_cluster_times()
+        {
+            RequireServer.Check().VersionGreaterThanOrEqualTo("3.6").ClusterTypes(ClusterType.ReplicaSet, ClusterType.Sharded);
+
+            var eventCapturer = new EventCapturer().Capture<CommandSucceededEvent>(e => e.CommandName == "ping");
+            using (var cluster = CoreTestConfiguration.CreateCluster(b => b.Subscribe(eventCapturer)))
+            using (var session = cluster.StartSession())
+            {
+                var cancellationToken = CancellationToken.None;
+                var server = (Server)cluster.SelectServer(WritableServerSelector.Instance, cancellationToken);
+                using (var channel = server.GetChannel(cancellationToken))
+                {
+                    var command = BsonDocument.Parse("{ ping : 1 }");
+                    channel.Command<BsonDocument>(
+                        session,
+                        ReadPreference.Primary,
+                        DatabaseNamespace.Admin,
+                        command,
+                        null, // payloads
+                        NoOpElementNameValidator.Instance,
+                        null, // additionalOptions
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
+                        BsonDocumentSerializer.Instance,
+                        new MessageEncoderSettings(),
+                        cancellationToken);
+                }
+
+                var commandSucceededEvent = eventCapturer.Next().Should().BeOfType<CommandSucceededEvent>().Subject;
+                var actualReply = commandSucceededEvent.Reply;
+                var actualClusterTime = actualReply["$clusterTime"].AsBsonDocument;
+                session.ClusterTime.Should().Be(actualClusterTime);
+                server.ClusterClock.ClusterTime.Should().Be(actualClusterTime);
+            }
+        }
+    }
+
+    internal static class ServerReflector
+    {
+        public static bool IsNotMaster(this Server server, ServerErrorCode code, string message)
+        {
+            var methodInfo = typeof(Server).GetMethod(nameof(IsNotMaster), BindingFlags.NonPublic | BindingFlags.Instance);
+            return (bool)methodInfo.Invoke(server, new object[] { code, message });
+        }
+
+        public static bool IsNotMasterOrRecovering(this Server server, ServerErrorCode code, string message)
+        {
+            var methodInfo = typeof(Server).GetMethod(nameof(IsNotMasterOrRecovering), BindingFlags.NonPublic | BindingFlags.Instance);
+            return (bool)methodInfo.Invoke(server, new object[] { code, message });
+        }
+
+        public static bool IsRecovering(this Server server, ServerErrorCode code, string message)
+        {
+            var methodInfo = typeof(Server).GetMethod(nameof(IsRecovering), BindingFlags.NonPublic | BindingFlags.Instance);
+            return (bool)methodInfo.Invoke(server, new object[] { code, message });
+        }
+
+        public static bool ShouldInvalidateServer(this Server server, Exception exception)
+        {
+            var methodInfo = typeof(Server).GetMethod(nameof(ShouldInvalidateServer), BindingFlags.NonPublic | BindingFlags.Instance);
+            return (bool)methodInfo.Invoke(server, new object[] { exception });
         }
     }
 }

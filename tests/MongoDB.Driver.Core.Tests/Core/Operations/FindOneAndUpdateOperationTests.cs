@@ -21,6 +21,7 @@ using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -145,16 +146,29 @@ namespace MongoDB.Driver.Core.Operations
         [Theory]
         [ParameterAttributeData]
         public void MaxTime_get_and_set_should_work(
-            [Values(null, 1, 2)]
-            int? seconds)
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var subject = new FindOneAndUpdateOperation<BsonDocument>(_collectionNamespace, _filter, _update, BsonDocumentSerializer.Instance, _messageEncoderSettings);
-            var value = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             subject.MaxTime = value;
             var result = subject.MaxTime;
 
             result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var subject = new FindOneAndUpdateOperation<BsonDocument>(_collectionNamespace, _filter, _update, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]
@@ -222,8 +236,10 @@ namespace MongoDB.Driver.Core.Operations
             [Values(null, 100L)]long? transactionNumber)
         {
             var subject = new FindOneAndUpdateOperation<BsonDocument>(_collectionNamespace, _filter, _update, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, transactionNumber);
+            var result = subject.CreateCommand(session, connectionDescription, transactionNumber);
 
             var expectedResult = new BsonDocument
             {
@@ -248,8 +264,10 @@ namespace MongoDB.Driver.Core.Operations
                 BypassDocumentValidation = bypassDocumentValidation
             };
             var serverVersion = Feature.BypassDocumentValidation.SupportedOrNotSupportedVersion(useServerVersionSupportingBypassDocumentValidation);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: serverVersion);
 
-            var result = subject.CreateCommand(serverVersion, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -272,8 +290,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Collation = collation
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.Collation.FirstSupportedVersion);
 
-            var result = subject.CreateCommand(Feature.Collation.FirstSupportedVersion, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -295,8 +315,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 IsUpsert = value
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -309,27 +331,32 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         [Theory]
-        [ParameterAttributeData]
-        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(
-            [Values(null, 1, 2)]
-            int? seconds)
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
         {
-            var maxTime = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
             var subject = new FindOneAndUpdateOperation<BsonDocument>(_collectionNamespace, _filter, _update, BsonDocumentSerializer.Instance, _messageEncoderSettings)
             {
-                MaxTime = maxTime
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
                 { "findAndModify", _collectionNamespace.CollectionName },
                 { "query", _filter },
                 { "update", _update },
-                { "maxTimeMS", () => seconds.Value * 1000, seconds.HasValue }
+                { "maxTimeMS", expectedMaxTimeMS }
             };
             result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Theory]
@@ -343,8 +370,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Projection = projection
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -366,8 +395,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 ReturnDocument = value
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -390,8 +421,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Sort = sort
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -417,8 +450,10 @@ namespace MongoDB.Driver.Core.Operations
                 WriteConcern = writeConcern
             };
             var serverVersion = Feature.FindAndModifyWriteConcern.SupportedOrNotSupportedVersion(useServerVersionSupportingFindAndModifyWriteConcern);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: serverVersion);
 
-            var result = subject.CreateCommand(serverVersion, null);
+            var result = subject.CreateCommand(session, connectionDescription, null);
 
             var expectedResult = new BsonDocument
             {
@@ -437,8 +472,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Collation = new Collation("en_US")
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.Collation.LastNotSupportedVersion);
 
-            var exception = Record.Exception(() => subject.CreateCommand(Feature.Collation.LastNotSupportedVersion, null));
+            var exception = Record.Exception(() => subject.CreateCommand(session, connectionDescription, null));
 
             exception.Should().BeOfType<NotSupportedException>();
         }
@@ -620,6 +657,26 @@ namespace MongoDB.Driver.Core.Operations
             var exception = Record.Exception(() => ExecuteOperation(subject, async));
 
             exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var filter = BsonDocument.Parse("{ asdf : 1 }");
+            var subject = new FindOneAndUpdateOperation<BsonDocument>(_collectionNamespace, filter, _update, _findAndModifyValueDeserializer, _messageEncoderSettings)
+            {
+                MaxTime = TimeSpan.FromSeconds(9001)
+            };
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
         }
 
         [SkippableTheory]

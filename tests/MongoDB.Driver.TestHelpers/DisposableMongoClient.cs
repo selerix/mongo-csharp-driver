@@ -18,6 +18,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Clusters;
+using MongoDB.Driver.Core.Operations;
 
 namespace MongoDB.Driver.TestHelpers
 {
@@ -61,24 +62,84 @@ namespace MongoDB.Driver.TestHelpers
             return wrapped.GetDatabase(name, settings);
         }
 
-        public IAsyncCursor<BsonDocument> ListDatabases(CancellationToken cancellationToken = default(CancellationToken))
+        public IAsyncCursor<string> ListDatabaseNames(
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabaseNames(cancellationToken);
+        }
+
+        public IAsyncCursor<string> ListDatabaseNames(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabaseNames(session, cancellationToken);
+        }
+
+        public Task<IAsyncCursor<string>> ListDatabaseNamesAsync(
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabaseNamesAsync(cancellationToken);
+        }
+
+        public Task<IAsyncCursor<string>> ListDatabaseNamesAsync(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabaseNamesAsync(session, cancellationToken);
+        }
+
+        public IAsyncCursor<BsonDocument> ListDatabases(
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             return wrapped.ListDatabases(cancellationToken);
         }
 
-        public IAsyncCursor<BsonDocument> ListDatabases(IClientSessionHandle session, CancellationToken cancellationToken = default(CancellationToken))
+        public IAsyncCursor<BsonDocument> ListDatabases(
+            ListDatabasesOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabases(options, cancellationToken);
+        }
+
+        public IAsyncCursor<BsonDocument> ListDatabases(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             return wrapped.ListDatabases(session, cancellationToken);
         }
+
+        public IAsyncCursor<BsonDocument> ListDatabases(
+            IClientSessionHandle session,
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabases(session, options, cancellationToken);
+        }
+        
 
         public Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(CancellationToken cancellationToken = default(CancellationToken))
         {
             return wrapped.ListDatabasesAsync(cancellationToken);
         }
 
+        public Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            ListDatabasesOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabasesAsync(options, cancellationToken);
+        }
+
         public Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(IClientSessionHandle session, CancellationToken cancellationToken = default(CancellationToken))
         {
             return wrapped.ListDatabasesAsync(session, cancellationToken);
+        }
+
+        public Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            IClientSessionHandle session,
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.ListDatabasesAsync(session, options, cancellationToken);
         }
 
         public IClientSessionHandle StartSession(ClientSessionOptions options = null, CancellationToken cancellationToken = default(CancellationToken))
@@ -89,6 +150,44 @@ namespace MongoDB.Driver.TestHelpers
         public Task<IClientSessionHandle> StartSessionAsync(ClientSessionOptions options = null, CancellationToken cancellationToken = default(CancellationToken))
         {
             return wrapped.StartSessionAsync(options, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual IChangeStreamCursor<TResult> Watch<TResult>(
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.Watch(pipeline, options, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual IChangeStreamCursor<TResult> Watch<TResult>(
+            IClientSessionHandle session,
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.Watch(session, pipeline, options, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual Task<IChangeStreamCursor<TResult>> WatchAsync<TResult>(
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.WatchAsync(pipeline, options, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual Task<IChangeStreamCursor<TResult>> WatchAsync<TResult>(
+            IClientSessionHandle session,
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return wrapped.WatchAsync(session, pipeline, options, cancellationToken);
         }
 
         public IMongoClient WithReadConcern(ReadConcern readConcern)

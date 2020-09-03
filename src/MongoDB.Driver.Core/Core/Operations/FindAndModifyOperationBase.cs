@@ -156,7 +156,7 @@ namespace MongoDB.Driver.Core.Operations
 
             using (var channelBinding = new ChannelReadWriteBinding(channelSource.Server, channel, binding.Session.Fork()))
             {
-                var operation = CreateOperation(channel.ConnectionDescription.ServerVersion, transactionNumber);
+                var operation = CreateOperation(channelBinding.Session, channel.ConnectionDescription, transactionNumber);
                 using (var rawBsonDocument = operation.Execute(channelBinding, cancellationToken))
                 {
                     return ProcessCommandResult(channel.ConnectionDescription.ConnectionId, rawBsonDocument);
@@ -173,7 +173,7 @@ namespace MongoDB.Driver.Core.Operations
 
             using (var channelBinding = new ChannelReadWriteBinding(channelSource.Server, channel, binding.Session.Fork()))
             {
-                var operation = CreateOperation(channel.ConnectionDescription.ServerVersion, transactionNumber);
+                var operation = CreateOperation(channelBinding.Session, channel.ConnectionDescription, transactionNumber);
                 using (var rawBsonDocument = await operation.ExecuteAsync(channelBinding, cancellationToken).ConfigureAwait(false))
                 {
                     return ProcessCommandResult(channel.ConnectionDescription.ConnectionId, rawBsonDocument);
@@ -182,11 +182,11 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         // private methods
-        internal abstract BsonDocument CreateCommand(SemanticVersion serverVersion, long? transactionNumber);
+        internal abstract BsonDocument CreateCommand(ICoreSessionHandle session, ConnectionDescription connectionDescription, long? transactionNumber);
 
-        private WriteCommandOperation<RawBsonDocument> CreateOperation(SemanticVersion serverVersion, long? transactionNumber)
+        private WriteCommandOperation<RawBsonDocument> CreateOperation(ICoreSessionHandle session, ConnectionDescription connectionDescription, long? transactionNumber)
         {
-            var command = CreateCommand(serverVersion, transactionNumber);
+            var command = CreateCommand(session, connectionDescription, transactionNumber);
             return new WriteCommandOperation<RawBsonDocument>(_collectionNamespace.DatabaseNamespace, command, RawBsonDocumentSerializer.Instance, _messageEncoderSettings)
             {
                 CommandValidator = GetCommandValidator()
@@ -207,15 +207,6 @@ namespace MongoDB.Driver.Core.Operations
                 Encoding = _messageEncoderSettings.GetOrDefault<UTF8Encoding>(MessageEncoderSettingsName.ReadEncoding, Utf8Encodings.Strict),
                 GuidRepresentation = _messageEncoderSettings.GetOrDefault<GuidRepresentation>(MessageEncoderSettingsName.GuidRepresentation, GuidRepresentation.CSharpLegacy)
             };
-
-            BsonValue writeConcernError;
-            if (rawBsonDocument.TryGetValue("writeConcernError", out writeConcernError))
-            {
-                var message = writeConcernError["errmsg"].AsString;
-                var response = rawBsonDocument.Materialize(binaryReaderSettings);
-                var writeConcernResult = new WriteConcernResult(response);
-                throw new MongoWriteConcernException(connectionId, message, writeConcernResult);
-            }
 
             using (var stream = new ByteBufferStream(rawBsonDocument.Slice, ownsBuffer: false))
             using (var reader = new BsonBinaryReader(stream, binaryReaderSettings))

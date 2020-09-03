@@ -81,29 +81,43 @@ Contributing
 Please see our [guidelines](CONTRIBUTING.md) for contributing to the driver.
 
 ### Maintainers:
+* Vincent Kam               vincent.kam@mongodb.com
+* Dmitry Lukyanov           dmitry.lukyanov@mongodb.com
 * Robert Stam               robert@mongodb.com
 * Craig Wilson              craig.wilson@mongodb.com
 
 ### Contributors:
 * Alexander Aramov          https://github.com/alex687
 * Bar Arnon                 https://github.com/I3arnon
+* Wan Bachtiar              https://github.com/sindbach
+* Mark Benvenuto            https://github.com/markbenvenuto
+* Ross Buggins              https://github.com/rbugginsvia
+* Ethan Celletti            https://github.com/Gekctek
 * Bit Diffusion Limited     code@bitdiff.com
 * Nima Boscarino            https://github.com/NimaBoscarino
 * Oscar Bralo               https://github.com/Oscarbralo
 * Alex Brown                https://github.com/alexjamesbrown
 * Adam Avery Cole           https://github.com/adamaverycole
+* Nate Contino              https://github.com/nathan-contino-mongo
 * Alex Dawes                https://github.com/alexdawes
 * Justin Dearing            zippy1981@gmail.com
 * Dan DeBilt                dan.debilt@gmail.com
 * Teun Duynstee             teun@duynstee.com
 * Einar Egilsson            https://github.com/einaregilsson
 * Ken Egozi                 mail@kenegozi.com
+* Alexander Endris          https://github.com/AlexEndris
 * Daniel Goldman            daniel@stackwave.com
 * Simon Green               simon@captaincodeman.com
+* Bouke Haarsma             https://github.com/Bouke
 * James Hadwen              james.hadwen@sociustec.com
+* Nuri Halperin             https://github.com/nurih
 * Jacob Jewell              jacobjewell@eflexsystems.com
 * Danny Kendrick            https://github.com/dkendrick
+* Ruslan Khasanbaev         https://github.com/flaksirus
+* Konstantin Khitrykh       https://github.com/KonH
 * Brian Knight              brianknight10@gmail.com  
+* John Knoop                https://github.com/johnknoop
+* Andrey Kondratyev         https://github.com/byTimo
 * Anatoly Koperin           https://github.com/ExM
 * Nik Kolev                 nkolev@gmail.com
 * Oleg Kosmakov             https://github.com/kosmakoff
@@ -114,12 +128,16 @@ Please see our [guidelines](CONTRIBUTING.md) for contributing to the driver.
 * Dow Liu                   redforks@gmail.com
 * Chuck Lu                  https://github.com/chucklu
 * Alex Lyman                mail.alex.lyman@gmail.com
+* John Murphy               https://github.com/jsmurphy
 * Alexander Nagy            optimiz3@gmail.com
 * Sridhar Nanjundeswaran    https://github.com/sridharn
+* Nathan                    https://github.com/terakilobyte
 * Rich Quackenbush          rich.quackenbush@captiveaire.com
 * Carl Reinke               https://github.com/mindless2112
+* Gian Maria Ricci          https://github.com/alkampfergit
 * Andrew Rondeau            github@andrewrondeau.com
 * Ed Rooth                  edward.rooth@wallstreetjapan.com
+* Katie Sadoff              https://github.com/ksadoff
 * Sam558                    https://github.com/Sam558
 * Sergey Shushlyapin        https://github.com/sergeyshushlyapin
 * Alexey Skalozub           pieceofsummer@gmail.com
@@ -128,5 +146,6 @@ Please see our [guidelines](CONTRIBUTING.md) for contributing to the driver.
 * Vyacheslav Stroy          https://github.com/kreig
 * Testo                     test1@doramail.com   
 * Zhmayev Yaroslav          https://github.com/salaros
+* Aristarkh Zagorodnikov    https://github.com/onyxmaster
 
 If you have contributed and we have neglected to add you to this list please contact one of the maintainers to be added to the list (with apologies).

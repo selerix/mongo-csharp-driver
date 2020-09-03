@@ -22,6 +22,7 @@ using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Shared;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -88,7 +89,7 @@ namespace MongoDB.Driver.Core.Operations
         public TimeSpan? MaxTime
         {
             get { return _maxTime; }
-            set { _maxTime = value; }
+            set { _maxTime = Ensure.IsNullOrInfiniteOrGreaterThanOrEqualToZero(value, nameof(value)); }
         }
 
         /// <summary>
@@ -163,18 +164,17 @@ namespace MongoDB.Driver.Core.Operations
         {
             Feature.ReadConcern.ThrowIfNotSupported(connectionDescription.ServerVersion, _readConcern);
 
-            var command = new BsonDocument
+            var readConcern = ReadConcernHelper.GetReadConcernForCommand(session, connectionDescription, _readConcern);
+            return new BsonDocument
             {
                 { "geoSearch", _collectionNamespace.CollectionName },
                 { "near", _near, _near != null },
                 { "limit", () => _limit.Value, _limit.HasValue },
                 { "maxDistance", () => _maxDistance.Value, _maxDistance.HasValue },
                 { "search", _search, _search != null },
-                { "maxTimeMS", () => _maxTime.Value.TotalMilliseconds, _maxTime.HasValue },
+                { "maxTimeMS", () => MaxTimeHelper.ToMaxTimeMS(_maxTime.Value), _maxTime.HasValue },
+                { "readConcern", readConcern, readConcern != null }
             };
-
-            ReadConcernHelper.AppendReadConcern(command, _readConcern, connectionDescription, session);
-            return command;
         }
 
         private ReadCommandOperation<TResult> CreateOperation(IChannel channel, IBinding binding)
@@ -184,7 +184,10 @@ namespace MongoDB.Driver.Core.Operations
                 _collectionNamespace.DatabaseNamespace,
                 command,
                 _resultSerializer,
-                _messageEncoderSettings);
+                _messageEncoderSettings)
+            {
+                RetryRequested = false
+            };
         }
     }
 }

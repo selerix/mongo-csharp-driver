@@ -24,6 +24,20 @@ namespace MongoDB.Driver
     /// </summary>
     public class ChangeStreamOperationTypeSerializer : StructSerializerBase<ChangeStreamOperationType>
     {
+        #region static
+        // private static fields
+        private static readonly ChangeStreamOperationTypeSerializer __instance = new ChangeStreamOperationTypeSerializer();
+
+        // public static properties
+        /// <summary>
+        /// Gets a ChangeStreamOperationTypeSerializer.
+        /// </summary>
+        /// <value>
+        /// A ChangeStreamOperationTypeSerializer.
+        /// </value>
+        public static ChangeStreamOperationTypeSerializer Instance => __instance;
+        #endregion
+
         /// <inheritdoc />
         public override ChangeStreamOperationType Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
         {
@@ -37,6 +51,8 @@ namespace MongoDB.Driver
                 case "invalidate": return ChangeStreamOperationType.Invalidate;
                 case "replace": return ChangeStreamOperationType.Replace;
                 case "update": return ChangeStreamOperationType.Update;
+                case "rename": return ChangeStreamOperationType.Rename;
+                case "drop": return ChangeStreamOperationType.Drop;
                 default: throw new FormatException($"Invalid ChangeStreamOperationType: \"{stringValue}\".");
             }
         }
@@ -53,6 +69,8 @@ namespace MongoDB.Driver
                 case ChangeStreamOperationType.Invalidate: writer.WriteString("invalidate"); break;
                 case ChangeStreamOperationType.Replace: writer.WriteString("replace"); break;
                 case ChangeStreamOperationType.Update: writer.WriteString("update"); break;
+                case ChangeStreamOperationType.Rename: writer.WriteString("rename"); break;
+                case ChangeStreamOperationType.Drop: writer.WriteString("drop"); break;
                 default: throw new ArgumentException($"Invalid ChangeStreamOperationType: {value}.", nameof(value));
             }
         }

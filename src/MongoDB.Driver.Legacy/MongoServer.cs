@@ -646,7 +646,10 @@ namespace MongoDB.Driver
         private IEnumerable<string> GetDatabaseNames(IClientSessionHandle session)
         {
             var messageEncoderSettings = GetMessageEncoderSettings();
-            var operation = new ListDatabasesOperation(messageEncoderSettings);
+            var operation = new ListDatabasesOperation(messageEncoderSettings)
+            {
+                RetryRequested = _settings.RetryReads
+            };
             var list = ExecuteReadOperation(session, operation).ToList();
             return list.Select(x => (string)x["name"]).OrderBy(name => name);
         }
@@ -842,11 +845,11 @@ namespace MongoDB.Driver
 
             if (readPreference.ReadPreferenceMode == ReadPreferenceMode.Primary)
             {
-                return new ReadWriteBindingHandle(new WritableServerBinding(_cluster, session.ToCoreSession()));
+                return new ReadWriteBindingHandle(new WritableServerBinding(_cluster, session.WrappedCoreSession.Fork()));
             }
             else
             {
-                return new ReadBindingHandle(new ReadPreferenceBinding(_cluster, readPreference, session.ToCoreSession()));
+                return new ReadBindingHandle(new ReadPreferenceBinding(_cluster, readPreference, session.WrappedCoreSession.Fork()));
             }
 
         }
@@ -867,7 +870,7 @@ namespace MongoDB.Driver
                 return ToWriteBinding(request.Binding).Fork();
             }
 
-            return new ReadWriteBindingHandle(new WritableServerBinding(_cluster, session.ToCoreSession()));
+            return new ReadWriteBindingHandle(new WritableServerBinding(_cluster, session.WrappedCoreSession.Fork()));
         }
 
         // private methods

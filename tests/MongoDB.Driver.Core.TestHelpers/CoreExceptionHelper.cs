@@ -58,7 +58,7 @@ namespace MongoDB.Driver.Core.TestHelpers
                         var serverId = new ServerId(clusterId, new DnsEndPoint("localhost", 27017));
                         var connectionId = new ConnectionId(serverId, 1);
                         var result = new BsonDocument();
-                        return new MongoNodeIsRecoveringException(connectionId, result);
+                        return new MongoNodeIsRecoveringException(connectionId, null, result);
                     }
 
                 case "MongoNotPrimaryException":
@@ -67,7 +67,7 @@ namespace MongoDB.Driver.Core.TestHelpers
                         var serverId = new ServerId(clusterId, new DnsEndPoint("localhost", 27017));
                         var connectionId = new ConnectionId(serverId, 1);
                         var result = new BsonDocument();
-                        return new MongoNotPrimaryException(connectionId, result);
+                        return new MongoNotPrimaryException(connectionId, null, result);
                     }
 
                 default:
@@ -75,7 +75,7 @@ namespace MongoDB.Driver.Core.TestHelpers
             }
         }
 
-        public static MongoCommandException CreateMongoCommandException(int code)
+        public static MongoCommandException CreateMongoCommandException(int code = 1, string label = null)
         {
             var clusterId = new ClusterId(1);
             var endPoint = new DnsEndPoint("localhost", 27017);
@@ -84,7 +84,13 @@ namespace MongoDB.Driver.Core.TestHelpers
             var message = "Fake MongoCommandException";
             var command = BsonDocument.Parse("{ command : 1 }");
             var result = BsonDocument.Parse($"{{ ok: 0, code : {code} }}");
-            return new MongoCommandException(connectionId, message, command, result);
+            var commandException = new MongoCommandException(connectionId, message, command, result);
+            if (label != null)
+            {
+                commandException.AddErrorLabel(label);
+            }
+
+            return commandException;
         }
     }
 }

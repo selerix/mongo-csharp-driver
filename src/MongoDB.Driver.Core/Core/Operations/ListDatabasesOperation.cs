@@ -13,8 +13,6 @@
 * limitations under the License.
 */
 
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,7 +30,10 @@ namespace MongoDB.Driver.Core.Operations
     public class ListDatabasesOperation : IReadOperation<IAsyncCursor<BsonDocument>>
     {
         // fields
+        private BsonDocument _filter;
         private MessageEncoderSettings _messageEncoderSettings;
+        private bool? _nameOnly;
+        private bool _retryRequested;
 
         // constructors
         /// <summary>
@@ -46,6 +47,18 @@ namespace MongoDB.Driver.Core.Operations
 
         // properties
         /// <summary>
+        /// Gets or sets the filter.
+        /// </summary>
+        /// <value>
+        /// The filter.
+        /// </value>
+        public BsonDocument Filter
+        {
+            get { return _filter; }
+            set { _filter = value; }
+        }
+
+        /// <summary>
         /// Gets the message encoder settings.
         /// </summary>
         /// <value>
@@ -54,6 +67,30 @@ namespace MongoDB.Driver.Core.Operations
         public MessageEncoderSettings MessageEncoderSettings
         {
             get { return _messageEncoderSettings; }
+        }
+
+        /// <summary>
+        /// Gets or sets the NameOnly flag.
+        /// </summary>
+        /// <value>
+        /// The NameOnly flag.
+        /// </value>
+        public bool? NameOnly
+        {
+            get { return _nameOnly; }
+            set { _nameOnly = value; }
+        }
+
+        /// <summary>
+        /// Gets or sets whether or not retry was requested.
+        /// </summary>
+        /// <value>
+        /// Whether retry was requested.
+        /// </value>
+        public bool RetryRequested
+        {
+            get { return _retryRequested; }
+            set { _retryRequested = value; }
         }
 
         // public methods
@@ -78,7 +115,12 @@ namespace MongoDB.Driver.Core.Operations
         // private methods
         internal BsonDocument CreateCommand()
         {
-            return new BsonDocument { { "listDatabases", 1 } };
+            return new BsonDocument
+            {
+                { "listDatabases", 1 },
+                { "filter", _filter, _filter != null },
+                { "nameOnly", _nameOnly, _nameOnly != null }
+            };
         }
 
         private IAsyncCursor<BsonDocument> CreateCursor(BsonDocument reply)
@@ -90,7 +132,10 @@ namespace MongoDB.Driver.Core.Operations
         private ReadCommandOperation<BsonDocument> CreateOperation()
         {
             var command = CreateCommand();
-            return new ReadCommandOperation<BsonDocument>(DatabaseNamespace.Admin, command, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            return new ReadCommandOperation<BsonDocument>(DatabaseNamespace.Admin, command, BsonDocumentSerializer.Instance, _messageEncoderSettings)
+            {
+                RetryRequested = _retryRequested
+            };
         }
     }
 }

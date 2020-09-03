@@ -27,13 +27,20 @@ namespace MongoDB.Driver
     public enum ReadConcernLevel
     {
         /// <summary>
+        /// Reads available data.
+        /// </summary>
+        Available,
+
+        /// <summary>
         /// Reads data committed locally.
         /// </summary>
         Local,
+
         /// <summary>
         /// Reads data committed to a majority of nodes.
         /// </summary>
         Majority,
+
         /// <summary>
         /// Avoids returning data from a "stale" primary 
         /// (one that has already been superseded by a new primary but doesn't know it yet). 
@@ -41,6 +48,11 @@ namespace MongoDB.Driver
         /// produce linearizable reads; they must be issued in conjunction with w:majority 
         /// writes to the same document(s) in order to be linearizable.
         /// </summary>
-        Linearizable
+        Linearizable,
+
+        /// <summary>
+        /// Snapshot read concern level.
+        /// </summary>
+        Snapshot
     }
 }

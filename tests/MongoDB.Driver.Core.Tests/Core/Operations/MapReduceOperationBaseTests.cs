@@ -120,15 +120,14 @@ namespace MongoDB.Driver.Core.Operations
         public void CreateCommand_should_return_the_expected_result()
         {
             var subject = new FakeMapReduceOperation(_collectionNamespace, _mapFunction, _reduceFunction, _messageEncoderSettings);
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) }
@@ -147,15 +146,15 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Collation = collation
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.Collation.FirstSupportedVersion);
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.Collation.FirstSupportedVersion);
 
-            var result = subject.CreateCommand(connectionDescription, session);
+
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -171,11 +170,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Collation = new Collation("en_US")
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.Collation.LastNotSupportedVersion);
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.Collation.LastNotSupportedVersion);
 
-            var exception = Record.Exception(() => subject.CreateCommand(connectionDescription, session));
+            var exception = Record.Exception(() => subject.CreateCommand(session, connectionDescription));
 
             exception.Should().BeOfType<NotSupportedException>();
         }
@@ -191,15 +189,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Filter = filter
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -219,15 +216,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 FinalizeFunction = finalizeFunction
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -246,15 +242,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 JavaScriptMode = javaScriptMode
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -273,15 +268,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Limit = limit
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -291,31 +285,33 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         [Theory]
-        [ParameterAttributeData]
-        public void CreateCommand_should_return_the_expected_result_when_MaxTime_is_provided(
-            [Values(null, 1, 2)]
-            int? seconds)
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
         {
-            var maxTime = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
             var subject = new FakeMapReduceOperation(_collectionNamespace, _mapFunction, _reduceFunction, _messageEncoderSettings)
             {
-                MaxTime = maxTime
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
-                { "maxTimeMS", () => seconds.Value * 1000, seconds.HasValue }
+                { "maxTimeMS", expectedMaxTimeMS }
             };
             result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Theory]
@@ -329,15 +325,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Scope = scope
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -357,15 +352,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Sort = sort
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -384,15 +378,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 Verbose = verbose
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("fake", 1) },
@@ -475,12 +468,11 @@ namespace MongoDB.Driver.Core.Operations
 
         [Theory]
         [ParameterAttributeData]
-        public void MaxTime_should_get_and_set_value(
-            [Values(null, 1, 2)]
-            int? seconds)
+        public void MaxTime_get_and_set_should_work(
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var subject = new FakeMapReduceOperation(_collectionNamespace, _mapFunction, _reduceFunction, _messageEncoderSettings);
-            var value = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             subject.MaxTime = value;
             var result = subject.MaxTime;
@@ -491,16 +483,15 @@ namespace MongoDB.Driver.Core.Operations
         [Theory]
         [ParameterAttributeData]
         public void MaxTime_set_should_throw_when_value_is_invalid(
-            [Values(-1, 0)]
-            int seconds)
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
         {
             var subject = new FakeMapReduceOperation(_collectionNamespace, _mapFunction, _reduceFunction, _messageEncoderSettings);
-            var value = TimeSpan.FromSeconds(seconds);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             var exception = Record.Exception(() => subject.MaxTime = value);
 
-            var argumentOutOfRangeException = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
-            argumentOutOfRangeException.ParamName.Should().Be("value");
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Fact]

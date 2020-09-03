@@ -68,6 +68,62 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.BinaryEncoders
             }
         }
 
+        /// <summary>
+        /// Gets a flag whether encryption has been configured.
+        /// </summary>
+        /// <value>
+        /// The flag whether encryption is configured or not.
+        /// </value>
+        protected bool IsEncryptionConfigured
+        {
+            get
+            {
+                return _encoderSettings?.GetOrDefault<IBinaryCommandFieldEncryptor>(MessageEncoderSettingsName.BinaryDocumentFieldEncryptor, null) != null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the maximum size of the document.
+        /// </summary>
+        /// <value>
+        /// The maximum size of the document.
+        /// </value>
+        protected int? MaxDocumentSize
+        {
+            get
+            {
+                return _encoderSettings?.GetOrDefault<int?>(MessageEncoderSettingsName.MaxDocumentSize, null);
+            }
+        }
+
+        /// <summary>
+        /// Gets the maximum size of the message.
+        /// </summary>
+        /// <value>
+        /// The maximum size of the message.
+        /// </value>
+        protected int? MaxMessageSize
+        {
+            get
+            {
+                return _encoderSettings?.GetOrDefault<int?>(MessageEncoderSettingsName.MaxMessageSize, null);
+            }
+        }
+
+        /// <summary>
+        /// Gets the maximum size of the wire document.
+        /// </summary>
+        /// <value>
+        /// The maximum size of the wire document.
+        /// </value>
+        protected int? MaxWireDocumentSize
+        {
+            get
+            {
+                return _encoderSettings?.GetOrDefault<int?>(MessageEncoderSettingsName.MaxWireDocumentSize, null);
+            }
+        }
+
         // methods
         /// <summary>
         /// Creates a binary reader for this encoder.

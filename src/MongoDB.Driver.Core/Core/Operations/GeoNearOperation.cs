@@ -22,6 +22,7 @@ using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Shared;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -129,7 +130,7 @@ namespace MongoDB.Driver.Core.Operations
         public TimeSpan? MaxTime
         {
             get { return _maxTime; }
-            set { _maxTime = value; }
+            set { _maxTime = Ensure.IsNullOrInfiniteOrGreaterThanOrEqualToZero(value, nameof(value)); }
         }
 
         /// <summary>
@@ -214,7 +215,8 @@ namespace MongoDB.Driver.Core.Operations
             Feature.ReadConcern.ThrowIfNotSupported(connectionDescription.ServerVersion, _readConcern);
             Feature.Collation.ThrowIfNotSupported(connectionDescription.ServerVersion, _collation);
 
-            var command = new BsonDocument
+            var readConcern = ReadConcernHelper.GetReadConcernForCommand(session, connectionDescription, _readConcern);
+            return new BsonDocument
             {
                 { "geoNear", _collectionNamespace.CollectionName },
                 { "near", _near },
@@ -225,12 +227,10 @@ namespace MongoDB.Driver.Core.Operations
                 { "distanceMultiplier", () => _distanceMultiplier.Value, _distanceMultiplier.HasValue },
                 { "includeLocs", () => _includeLocs.Value, _includeLocs.HasValue },
                 { "uniqueDocs", () => _uniqueDocs.Value, _uniqueDocs.HasValue },
-                { "maxTimeMS", () => _maxTime.Value.TotalMilliseconds, _maxTime.HasValue },
-                { "collation", () => _collation.ToBsonDocument(), _collation != null }
+                { "maxTimeMS", () => MaxTimeHelper.ToMaxTimeMS(_maxTime.Value), _maxTime.HasValue },
+                { "collation", () => _collation.ToBsonDocument(), _collation != null },
+                { "readConcern", readConcern, readConcern != null }
             };
-
-            ReadConcernHelper.AppendReadConcern(command, _readConcern, connectionDescription, session);
-            return command;
         }
 
         private ReadCommandOperation<TResult> CreateOperation(IChannel channel, IBinding binding)
@@ -240,7 +240,10 @@ namespace MongoDB.Driver.Core.Operations
                 _collectionNamespace.DatabaseNamespace,
                 command,
                 _resultSerializer,
-                _messageEncoderSettings);
+                _messageEncoderSettings)
+            {
+                RetryRequested = false
+            };
         }
     }
 }

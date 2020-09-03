@@ -15,6 +15,7 @@
 
 using System;
 using System.Reflection;
+using System.Threading;
 using FluentAssertions;
 using MongoDB.Bson;
 using Moq;
@@ -70,6 +71,28 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void CurrentTransaction_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+
+            var result = subject.CurrentTransaction;
+
+            mockWrapped.Verify(m => m.CurrentTransaction, Times.Once);
+        }
+
+        [Fact]
+        public void CurrentTransaction_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+
+            var exception = Record.Exception(() => subject.CurrentTransaction);
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
         public void Id_should_call_wrapped()
         {
             Mock<ICoreSession> mockWrapped;
@@ -114,6 +137,28 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void IsInTransaction_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+
+            var result = subject.IsInTransaction;
+
+            mockWrapped.Verify(m => m.IsInTransaction, Times.Once);
+        }
+
+        [Fact]
+        public void IsInTransaction_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+
+            var exception = Record.Exception(() => subject.IsInTransaction);
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
         public void OperationTime_should_call_wrapped()
         {
             Mock<ICoreSession> mockWrapped;
@@ -136,6 +181,50 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void Options_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+
+            var result = subject.Options;
+
+            mockWrapped.Verify(m => m.Options, Times.Once);
+        }
+
+        [Fact]
+        public void Options_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+
+            var exception = Record.Exception(() => subject.Options);
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
+        public void ServerSession_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+
+            var result = subject.ServerSession;
+
+            mockWrapped.Verify(m => m.ServerSession, Times.Once);
+        }
+
+        [Fact]
+        public void ServerSession_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+
+            var exception = Record.Exception(() => subject.ServerSession);
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
         public void Wrapped_should_return_expected_result()
         {
             Mock<ICoreSession> mockWrapped;
@@ -152,6 +241,52 @@ namespace MongoDB.Driver.Core.Bindings
             var subject = CreateDisposedSubject();
 
             var exception = Record.Exception(() => subject.Wrapped);
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
+        public void AbortTransaction_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+            var cancellationToken = new CancellationToken();
+
+            subject.AbortTransaction(cancellationToken);
+
+            mockWrapped.Verify(m => m.AbortTransaction(cancellationToken), Times.Once);
+        }
+
+        [Fact]
+        public void AbortTransaction_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+            var cancellationToken = new CancellationToken();
+
+            var exception = Record.Exception(() => subject.AbortTransaction(cancellationToken));
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
+        public void AboutToSendCommand_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+
+            subject.AboutToSendCommand();
+
+            mockWrapped.Verify(m => m.AboutToSendCommand(), Times.Once);
+        }
+
+        [Fact]
+        public void AboutToSendCommand_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+
+            var exception = Record.Exception(() => subject.AboutToSendCommand());
 
             var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
             e.ObjectName.Should().Be(subject.GetType().FullName);
@@ -206,6 +341,30 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void CommitTransaction_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+            var cancellationToken = new CancellationToken();
+
+            subject.CommitTransaction(cancellationToken);
+
+            mockWrapped.Verify(m => m.CommitTransaction(cancellationToken), Times.Once);
+        }
+
+        [Fact]
+        public void CommitTransaction_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+            var cancellationToken = new CancellationToken();
+
+            var exception = Record.Exception(() => subject.CommitTransaction(cancellationToken));
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
+        }
+
+        [Fact]
         public void Dispose_should_call_Dispose_true()
         {
             var subject = CreateSubject();
@@ -225,6 +384,30 @@ namespace MongoDB.Driver.Core.Bindings
             subject.Dispose();
 
             mockWrapped.Verify(m => m.Dispose(), Times.Once);
+        }
+
+        [Fact]
+        public void StartTransaction_should_call_wrapped()
+        {
+            Mock<ICoreSession> mockWrapped;
+            var subject = CreateSubject(out mockWrapped);
+            var transactionOptions = new TransactionOptions();
+
+            subject.StartTransaction(transactionOptions);
+
+            mockWrapped.Verify(m => m.StartTransaction(transactionOptions), Times.Once);
+        }
+
+        [Fact]
+        public void StartTransaction_should_throw_when_disposed()
+        {
+            var subject = CreateDisposedSubject();
+            var transactionOptions = new TransactionOptions();
+
+            var exception = Record.Exception(() => subject.StartTransaction(transactionOptions));
+
+            var e = exception.Should().BeOfType<ObjectDisposedException>().Subject;
+            e.ObjectName.Should().Be(subject.GetType().FullName);
         }
 
         [Fact]

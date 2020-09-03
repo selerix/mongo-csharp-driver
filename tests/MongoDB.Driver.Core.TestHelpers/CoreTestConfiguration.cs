@@ -42,8 +42,10 @@ namespace MongoDB.Driver
         #region static
         // static fields
         private static Lazy<ICluster> __cluster = new Lazy<ICluster>(CreateCluster, isThreadSafe: true);
-        private static ConnectionString __connectionString = GetConnectionString();
-        private static DatabaseNamespace __databaseNamespace = GetDatabaseNamespace();
+        private static Lazy<ConnectionString> __connectionString = new Lazy<ConnectionString>(GetConnectionString, isThreadSafe: true);
+        private static Lazy<ConnectionString>  __connectionStringWithMultipleShardRouters = new Lazy<ConnectionString>(
+            GetConnectionStringWithMultipleShardRouters, isThreadSafe: true);
+        private static Lazy<DatabaseNamespace> __databaseNamespace = new Lazy<DatabaseNamespace>(GetDatabaseNamespace, isThreadSafe: true);
         private static MessageEncoderSettings __messageEncoderSettings = new MessageEncoderSettings();
         private static TraceSource __traceSource;
 
@@ -55,12 +57,17 @@ namespace MongoDB.Driver
 
         public static ConnectionString ConnectionString
         {
-            get { return __connectionString; }
+            get { return __connectionString.Value; }
+        }
+        
+        public static ConnectionString ConnectionStringWithMultipleShardRouters
+        {
+            get => __connectionStringWithMultipleShardRouters.Value;
         }
 
         public static DatabaseNamespace DatabaseNamespace
         {
-            get { return __databaseNamespace; }
+            get { return __databaseNamespace.Value; }
         }
 
         public static MessageEncoderSettings MessageEncoderSettings
@@ -97,10 +104,10 @@ namespace MongoDB.Driver
             }
 
             builder = builder
-                .ConfigureWithConnectionString(__connectionString)
+                .ConfigureWithConnectionString(__connectionString.Value)
                 .ConfigureCluster(c => c.With(serverSelectionTimeout: TimeSpan.FromMilliseconds(int.Parse(serverSelectionTimeoutString))));
 
-            if (__connectionString.Ssl.HasValue && __connectionString.Ssl.Value)
+            if (__connectionString.Value.Tls.HasValue && __connectionString.Value.Tls.Value)
             {
                 var certificateFilename = Environment.GetEnvironmentVariable("MONGO_SSL_CERT_FILE");
                 if (certificateFilename != null)
@@ -203,28 +210,42 @@ namespace MongoDB.Driver
 
         public static CollectionNamespace GetCollectionNamespaceForTestClass(Type testClassType)
         {
-            var collectionName = TruncateCollectionNameIfTooLong(__databaseNamespace, testClassType.Name);
-            return new CollectionNamespace(__databaseNamespace, collectionName);
+            var collectionName = TruncateCollectionNameIfTooLong(__databaseNamespace.Value, testClassType.Name);
+            return new CollectionNamespace(__databaseNamespace.Value, collectionName);
         }
 
-        public static CollectionNamespace GetCollectionNamespaceForTestMethod()
+        public static CollectionNamespace GetCollectionNamespaceForTestMethod(string className, string methodName)
         {
-            var testMethodInfo = GetTestMethodInfoFromCallStack();
-            var collectionName = TruncateCollectionNameIfTooLong(__databaseNamespace, testMethodInfo.DeclaringType.Name + "-" + testMethodInfo.Name);
-            return new CollectionNamespace(__databaseNamespace, collectionName);
+            var collectionName = TruncateCollectionNameIfTooLong(__databaseNamespace.Value, $"{className}-{methodName}");
+            return new CollectionNamespace(__databaseNamespace.Value, collectionName);
         }
 
         private static ConnectionString GetConnectionString()
         {
-            var uri = Environment.GetEnvironmentVariable("MONGODB_URI") ?? Environment.GetEnvironmentVariable("MONGO_URI") ?? "mongodb://localhost";
+            var uri = Environment.GetEnvironmentVariable("MONGODB_URI") ?? Environment.GetEnvironmentVariable("MONGO_URI");
+            if (uri == null)
+            {
+                uri = "mongodb://localhost";
+                if (IsReplicaSet(uri))
+                {
+                    uri += "/?connect=replicaSet";
+                }
+            }
+
+            return new ConnectionString(uri);
+        }
+        
+        private static ConnectionString GetConnectionStringWithMultipleShardRouters()
+        {
+            var uri = Environment.GetEnvironmentVariable("MONGODB_URI_WITH_MULTIPLE_MONGOSES") ?? "mongodb://localhost,localhost:27018";
             return new ConnectionString(uri);
         }
 
         private static DatabaseNamespace GetDatabaseNamespace()
         {
-            if (!string.IsNullOrEmpty(__connectionString.DatabaseName))
+            if (!string.IsNullOrEmpty(__connectionString.Value.DatabaseName))
             {
-                return new DatabaseNamespace(__connectionString.DatabaseName);
+                return new DatabaseNamespace(__connectionString.Value.DatabaseName);
             }
 
             var timestamp = DateTime.Now.ToString("MMddHHmm");
@@ -233,7 +254,7 @@ namespace MongoDB.Driver
 
         public static DatabaseNamespace GetDatabaseNamespaceForTestClass(Type testClassType)
         {
-            var databaseName = TruncateDatabaseNameIfTooLong(__databaseNamespace.DatabaseName + "-" + testClassType.Name);
+            var databaseName = TruncateDatabaseNameIfTooLong(__databaseNamespace.Value.DatabaseName + "-" + testClassType.Name);
             if (databaseName.Length >= 64)
             {
                 databaseName = databaseName.Substring(0, 63);
@@ -241,25 +262,10 @@ namespace MongoDB.Driver
             return new DatabaseNamespace(databaseName);
         }
 
-        public static IReadBinding GetReadBinding(ICoreSessionHandle session)
-        {
-            return GetReadBinding(ReadPreference.Primary, session);
-        }
-
-        public static IReadBinding GetReadBinding(ReadPreference readPreference, ICoreSessionHandle session)
-        {
-            return new ReadPreferenceBinding(__cluster.Value, readPreference, session);
-        }
-
-        public static IReadWriteBinding GetReadWriteBinding(ICoreSessionHandle session)
-        {
-            return new WritableServerBinding(__cluster.Value, session);
-        }
-
         public static IEnumerable<string> GetModules()
         {
-            var session = CoreTestConfiguration.StartSession();
-            using (var binding = GetReadBinding(session))
+            using (var session = StartSession())
+            using (var binding = CreateReadBinding(session))
             {
                 var command = new BsonDocument("buildinfo", 1);
                 var operation = new ReadCommandOperation<BsonDocument>(DatabaseNamespace.Admin, command, BsonDocumentSerializer.Instance, __messageEncoderSettings);
@@ -278,8 +284,8 @@ namespace MongoDB.Driver
 
         public static string GetStorageEngine()
         {
-            var session = CoreTestConfiguration.StartSession();
-            using (var binding = GetReadWriteBinding(session))
+            using (var session = StartSession())
+            using (var binding = CreateReadWriteBinding(session))
             {
                 var command = new BsonDocument("serverStatus", 1);
                 var operation = new ReadCommandOperation<BsonDocument>(DatabaseNamespace.Admin, command, BsonDocumentSerializer.Instance, __messageEncoderSettings);
@@ -301,11 +307,11 @@ namespace MongoDB.Driver
             return StartSession(__cluster.Value);
         }
 
-        public static ICoreSessionHandle StartSession(ICluster cluster)
+        public static ICoreSessionHandle StartSession(ICluster cluster, CoreSessionOptions options = null)
         {
             if (AreSessionsSupported(cluster))
             {
-                return TestCoreSession.NewHandle();
+                return cluster.StartSession(options);
             }
             else
             {
@@ -313,48 +319,32 @@ namespace MongoDB.Driver
             }
         }
 
-        private static Type GetTestClassTypeFromCallStack()
+        private static bool IsReplicaSet(string uri)
         {
-            var methodInfo = GetTestMethodInfoFromCallStack();
-            return methodInfo.DeclaringType;
-        }
+            var clusterBuilder = new ClusterBuilder();
+            clusterBuilder.ConfigureWithConnectionString(uri);
 
-        private static MethodInfo GetTestMethodInfoFromCallStack()
-        {
-#if NET45
-            var stackTrace = new StackTrace();
-#else
-            var stackTrace = new StackTrace(new Exception(), needFileInfo: false);
-#endif
-            var stackFrames = stackTrace.GetFrames();
-            for (var index = 0; index < stackFrames.Length; index++)
+            using (var cluster = clusterBuilder.BuildCluster())
             {
-                var frame = stackFrames[index];
-                var methodInfo = frame.GetMethod() as MethodInfo;
-                if (methodInfo != null)
-                {
-                    var factAttribute = methodInfo.GetCustomAttribute<FactAttribute>();
-                    if (factAttribute != null)
-                    {
-                        return methodInfo;
-                    }
-                }
-            }
+                cluster.Initialize();
 
-            throw new Exception("No [FactAttribute] found on the call stack.");
+                var serverSelector = new ReadPreferenceServerSelector(ReadPreference.PrimaryPreferred);
+                var server = cluster.SelectServer(serverSelector, CancellationToken.None);
+                return server.Description.Type.IsReplicaSetMember();
+            }
         }
 
         private static string TruncateCollectionNameIfTooLong(DatabaseNamespace databaseNamespace, string collectionName)
         {
             var fullNameLength = databaseNamespace.DatabaseName.Length + 1 + collectionName.Length;
-            if (fullNameLength < 123)
+            if (fullNameLength <= 120)
             {
                 return collectionName;
             }
             else
             {
-                var maxCollectionNameLength = 123 - (databaseNamespace.DatabaseName.Length + 1);
-                return collectionName.Substring(0, maxCollectionNameLength);
+                var maxCollectionNameLength = 120 - (databaseNamespace.DatabaseName.Length + 1);
+                return collectionName.Substring(0, maxCollectionNameLength - 1);
             }
         }
 
@@ -371,7 +361,7 @@ namespace MongoDB.Driver
         }
         #endregion
 
-        // methods
+        // private methods
         private static bool AreSessionsSupported(ICluster cluster)
         {
             SpinWait.SpinUntil(() => cluster.Description.Servers.Any(s => s.State == ServerState.Connected), TimeSpan.FromSeconds(30));
@@ -385,12 +375,29 @@ namespace MongoDB.Driver
                 clusterDescription.LogicalSessionTimeout.HasValue;
         }
 
+        private static IReadBindingHandle CreateReadBinding(ICoreSessionHandle session)
+        {
+            return CreateReadBinding(ReadPreference.Primary, session);
+        }
+
+        private static IReadBindingHandle CreateReadBinding(ReadPreference readPreference, ICoreSessionHandle session)
+        {
+            var binding = new ReadPreferenceBinding(__cluster.Value, readPreference, session.Fork());
+            return new ReadBindingHandle(binding);
+        }
+
+        private static IReadWriteBindingHandle CreateReadWriteBinding(ICoreSessionHandle session)
+        {
+            var binding = new WritableServerBinding(__cluster.Value, session.Fork());
+            return new ReadWriteBindingHandle(binding);
+        }
+
         private static void DropDatabase()
         {
-            var operation = new DropDatabaseOperation(__databaseNamespace, __messageEncoderSettings);
+            var operation = new DropDatabaseOperation(__databaseNamespace.Value, __messageEncoderSettings);
 
-            var session = CoreTestConfiguration.StartSession();
-            using (var binding = GetReadWriteBinding(session))
+            using (var session = StartSession())
+            using (var binding = CreateReadWriteBinding(session))
             {
                 operation.Execute(binding, CancellationToken.None);
             }

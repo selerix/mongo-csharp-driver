@@ -21,7 +21,9 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Bindings;
+using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -422,6 +424,23 @@ namespace MongoDB.Driver.Core.Operations
 
         [SkippableTheory]
         [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var subject = new MapReduceOperation<BsonDocument>(_collectionNamespace, _mapFunction, _reduceFunction, _resultSerializer, _messageEncoderSettings);
+            subject.MaxTime = TimeSpan.FromSeconds(9001);
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
         public void Execute_should_throw_when_ReadConcern_is_set_but_not_supported(
             [Values(false, true)]
             bool async)
@@ -447,7 +466,7 @@ namespace MongoDB.Driver.Core.Operations
             EnsureTestData();
             var subject = new MapReduceOperation<BsonDocument>(_collectionNamespace, _mapFunction, _reduceFunction, _resultSerializer, _messageEncoderSettings);
 
-            VerifySessionIdWasSentWhenSupported(subject, "mapreduce", async);
+            VerifySessionIdWasSentWhenSupported(subject, "mapReduce", async);
         }
 
         [SkippableTheory]
@@ -461,15 +480,14 @@ namespace MongoDB.Driver.Core.Operations
             {
                 ReadConcern = readConcern
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.ReadConcern.FirstSupportedVersion);
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.ReadConcern.FirstSupportedVersion);
 
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("inline", 1) },
@@ -485,11 +503,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 ReadConcern = ReadConcern.Majority
             };
-
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.ReadConcern.LastNotSupportedVersion);
             var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.ReadConcern.LastNotSupportedVersion);
 
-            var exception = Record.Exception(() => subject.CreateCommand(connectionDescription, session));
+            var exception = Record.Exception(() => subject.CreateCommand(session, connectionDescription));
 
             exception.Should().BeOfType<MongoClientException>();
         }
@@ -505,18 +522,17 @@ namespace MongoDB.Driver.Core.Operations
             {
                 ReadConcern = readConcern
             };
+            var session = OperationTestHelper.CreateSession(isCausallyConsistent: true, operationTime: new BsonTimestamp(100));
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.ReadConcern.FirstSupportedVersion, supportsSessions: true);
 
-            var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.ReadConcern.FirstSupportedVersion, supportsSessions: true);
-            var session = OperationTestHelper.CreateSession(true, new BsonTimestamp(100));
-
-            var result = subject.CreateCommand(connectionDescription, session);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedReadConcernDocument = readConcern.ToBsonDocument();
             expectedReadConcernDocument["afterClusterTime"] = new BsonTimestamp(100);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument("inline", 1) },

@@ -24,7 +24,6 @@ using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Configuration;
@@ -33,6 +32,7 @@ using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Events;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.WireProtocol;
+using MongoDB.Driver.Core.WireProtocol.Messages;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 
 namespace MongoDB.Driver.Core.Servers
@@ -47,6 +47,7 @@ namespace MongoDB.Driver.Core.Servers
         private static readonly List<Type> __invalidatingExceptions = new List<Type>
         {
             typeof(MongoNotPrimaryException),
+            typeof(MongoNodeIsRecoveringException),
             typeof(MongoConnectionException),
             typeof(SocketException),
             typeof(EndOfStreamException),
@@ -146,8 +147,20 @@ namespace MongoDB.Driver.Core.Servers
                 connection.Open(CancellationToken.None);
                 return new ServerChannel(this, connection);
             }
-            catch
+            catch (Exception ex)
             {
+                if (ShouldClearConnectionPool(ex))
+                {
+                    try
+                    {
+                        _connectionPool.Clear();
+                    }
+                    catch
+                    {
+                        // ignore exceptions
+                    }
+
+                }
                 connection.Dispose();
                 throw;
             }
@@ -168,8 +181,19 @@ namespace MongoDB.Driver.Core.Servers
                 await connection.OpenAsync(CancellationToken.None).ConfigureAwait(false);
                 return new ServerChannel(this, connection);
             }
-            catch
+            catch (Exception ex)
             {
+                if (ShouldClearConnectionPool(ex))
+                {
+                    try
+                    {
+                        _connectionPool.Clear();
+                    }
+                    catch
+                    {
+                        // ignore exceptions
+                    }
+                }
                 connection.Dispose();
                 throw;
             }
@@ -200,8 +224,7 @@ namespace MongoDB.Driver.Core.Servers
         public void Invalidate()
         {
             ThrowIfNotOpen();
-            _connectionPool.Clear();
-            _monitor.Invalidate();
+            Invalidate(clearConnectionPool: true);
         }
 
         public void RequestHeartbeat()
@@ -253,14 +276,129 @@ namespace MongoDB.Driver.Core.Servers
                 return;
             }
 
-            if (__invalidatingExceptions.Contains(ex.GetType()))
+            if (ShouldInvalidateServer(ex))
             {
-                Invalidate();
+                var shouldClearConnectionPool = ShouldClearConnectionPoolForChannelException(ex, connection.Description.ServerVersion);
+                Invalidate(shouldClearConnectionPool);
             }
             else
             {
                 RequestHeartbeat();
             }
+        }
+
+        private void Invalidate(bool clearConnectionPool)
+        {
+            if (clearConnectionPool)
+            {
+                _connectionPool.Clear();
+            }
+            _monitor.Invalidate();
+        }
+
+        private bool IsNotMaster(ServerErrorCode code, string message)
+        {
+            switch (code)
+            {
+                case ServerErrorCode.NotMaster: // 10107
+                case ServerErrorCode.NotMasterNoSlaveOk: // 13435
+                    return true;
+            }
+
+            if (message != null)
+            {
+                if (message.IndexOf("not master", StringComparison.OrdinalIgnoreCase) != -1 &&
+                    message.IndexOf("not master or secondary", StringComparison.OrdinalIgnoreCase) == -1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsNotMasterOrRecovering(ServerErrorCode code, string message)
+        {
+            return IsNotMaster(code, message) || IsRecovering(code, message);
+        }
+
+        private bool IsRecovering(ServerErrorCode code, string message)
+        {
+            switch (code)
+            {
+                case ServerErrorCode.InterruptedAtShutdown: // 11600
+                case ServerErrorCode.InterruptedDueToReplStateChange: // 11602
+                case ServerErrorCode.NotMasterOrSecondary: // 13436
+                case ServerErrorCode.PrimarySteppedDown: // 189
+                case ServerErrorCode.ShutdownInProgress: // 91
+                    return true;
+            }
+
+            if (message != null)
+            {
+                if (message.IndexOf("not master or secondary", StringComparison.OrdinalIgnoreCase) != -1 ||
+                    message.IndexOf("node is recovering", StringComparison.OrdinalIgnoreCase) != -1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool ShouldClearConnectionPool(Exception ex)
+        {
+            return ex is MongoAuthenticationException;
+        }
+
+        private bool ShouldClearConnectionPoolForChannelException(Exception ex, SemanticVersion serverVersion)
+        {
+            if (ex is MongoNotPrimaryException mongoNotPrimaryException && mongoNotPrimaryException.Code == (int)ServerErrorCode.NotMaster)
+            {
+                return !Feature.KeepConnectionPoolWhenNotMasterConnectionException.IsSupported(serverVersion);
+            }
+
+            return true;
+        }
+
+        private bool ShouldInvalidateServer(Exception exception)
+        {
+            if (__invalidatingExceptions.Contains(exception.GetType()))
+            {
+                return true;
+            }
+
+            var commandException = exception as MongoCommandException;
+            if (commandException != null)
+            {
+                var code = (ServerErrorCode)commandException.Code;
+                var message = commandException.ErrorMessage;
+
+                if (IsNotMasterOrRecovering(code, message))
+                {
+                    return true;
+                }
+
+                if (commandException.GetType() == typeof(MongoWriteConcernException))
+                {
+                    var writeConcernException = (MongoWriteConcernException)commandException;
+                    var writeConcernResult = writeConcernException.WriteConcernResult;
+                    var response = writeConcernResult.Response;
+                    var writeConcernError = response["writeConcernError"].AsBsonDocument;
+                    if (writeConcernError != null)
+                    {
+                        code = (ServerErrorCode)writeConcernError.GetValue("code", -1).ToInt32();
+                        message = writeConcernError.GetValue("errmsg", null)?.AsString;
+
+                        if (IsNotMasterOrRecovering(code, message))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
         }
 
         private void ThrowIfDisposed()
@@ -309,6 +447,7 @@ namespace MongoDB.Driver.Core.Servers
             }
 
             // methods
+            [Obsolete("Use the newest overload instead.")]
             public TResult Command<TResult>(
                 DatabaseNamespace databaseNamespace,
                 BsonDocument command,
@@ -319,20 +458,30 @@ namespace MongoDB.Driver.Core.Servers
                 MessageEncoderSettings messageEncoderSettings,
                 CancellationToken cancellationToken)
             {
-                return Command(
+                var readPreference = GetEffectiveReadPreference(slaveOk, null);
+                var result = Command(
                     NoCoreSession.Instance,
-                    null, // readPreference
+                    readPreference,
                     databaseNamespace,
                     command,
+                    null, // commandPayloads
                     commandValidator,
                     null, // additionalOptions
-                    responseHandling,
-                    slaveOk,
+                    null, // postWriteAction
+                    CommandResponseHandling.Return,
                     resultSerializer,
                     messageEncoderSettings,
                     cancellationToken);
+
+                if (responseHandling != null && responseHandling() != CommandResponseHandling.Return)
+                {
+                    throw new NotSupportedException("This overload requires responseHandling to be: Return.");
+                }
+
+                return result;
             }
 
+            [Obsolete("Use the newest overload instead.")]
             public TResult Command<TResult>(
                 ICoreSession session,
                 ReadPreference readPreference,
@@ -346,22 +495,60 @@ namespace MongoDB.Driver.Core.Servers
                 MessageEncoderSettings messageEncoderSettings,
                 CancellationToken cancellationToken)
             {
-                slaveOk = GetEffectiveSlaveOk(slaveOk);
+                readPreference = GetEffectiveReadPreference(slaveOk, readPreference);
+                var result = Command(
+                    session,
+                    readPreference,
+                    databaseNamespace,
+                    command,
+                    null, // commandPayloads
+                    commandValidator,
+                    additionalOptions,
+                    null, // postWriteActions
+                    CommandResponseHandling.Return,
+                    resultSerializer,
+                    messageEncoderSettings,
+                    cancellationToken);
+
+                if (responseHandling != null && responseHandling() != CommandResponseHandling.Return)
+                {
+                    throw new NotSupportedException("This overload requires responseHandling to be: Return.");
+                }
+
+                return result;
+            }
+
+            public TResult Command<TResult>(
+                ICoreSession session,
+                ReadPreference readPreference,
+                DatabaseNamespace databaseNamespace,
+                BsonDocument command,
+                IEnumerable<Type1CommandMessageSection> commandPayloads,
+                IElementNameValidator commandValidator,
+                BsonDocument additionalOptions,
+                Action<IMessageEncoderPostProcessor> postWriteAction,
+                CommandResponseHandling responseHandling,
+                IBsonSerializer<TResult> resultSerializer,
+                MessageEncoderSettings messageEncoderSettings,
+                CancellationToken cancellationToken)
+            {
                 var protocol = new CommandWireProtocol<TResult>(
                     CreateClusterClockAdvancingCoreSession(session),
                     readPreference,
                     databaseNamespace,
                     command,
+                    commandPayloads,
                     commandValidator,
                     additionalOptions,
+                    postWriteAction,
                     responseHandling,
-                    slaveOk,
                     resultSerializer,
                     messageEncoderSettings);
 
-                return ExecuteProtocol(protocol, cancellationToken);
+                return ExecuteProtocol(protocol, session, cancellationToken);
             }
 
+            [Obsolete("Use the newest overload instead.")]
             public Task<TResult> CommandAsync<TResult>(
                 DatabaseNamespace databaseNamespace,
                 BsonDocument command,
@@ -372,20 +559,30 @@ namespace MongoDB.Driver.Core.Servers
                 MessageEncoderSettings messageEncoderSettings,
                 CancellationToken cancellationToken)
             {
-                return CommandAsync(
+                var readPreference = GetEffectiveReadPreference(slaveOk, null);
+                var result = CommandAsync(
                     NoCoreSession.Instance,
-                    null, // readPreference
+                    readPreference,
                     databaseNamespace,
                     command,
+                    null, // commandPayloads
                     commandValidator,
                     null, // additionalOptions
-                    responseHandling,
-                    slaveOk,
+                    null, // postWriteAction
+                    CommandResponseHandling.Return,
                     resultSerializer,
                     messageEncoderSettings,
                     cancellationToken);
+
+                if (responseHandling != null && responseHandling() != CommandResponseHandling.Return)
+                {
+                    throw new NotSupportedException("This overload requires responseHandling to be 'Return'.");
+                }
+
+                return result;
             }
 
+            [Obsolete("Use the newest overload instead.")]
             public Task<TResult> CommandAsync<TResult>(
                 ICoreSession session,
                 ReadPreference readPreference,
@@ -399,20 +596,57 @@ namespace MongoDB.Driver.Core.Servers
                 MessageEncoderSettings messageEncoderSettings,
                 CancellationToken cancellationToken)
             {
-                slaveOk = GetEffectiveSlaveOk(slaveOk);
+                readPreference = GetEffectiveReadPreference(slaveOk, readPreference);
+                var result = CommandAsync(
+                    session,
+                    readPreference,
+                    databaseNamespace,
+                    command,
+                    null, // commandPayloads
+                    commandValidator,
+                    additionalOptions,
+                    null, // postWriteAction
+                    CommandResponseHandling.Return,
+                    resultSerializer,
+                    messageEncoderSettings,
+                    cancellationToken);
+
+                if (responseHandling != null && responseHandling() != CommandResponseHandling.Return)
+                {
+                    throw new NotSupportedException("This overload requires responseHandling to be 'Return'.");
+                }
+
+                return result;
+            }
+
+            public Task<TResult> CommandAsync<TResult>(
+                ICoreSession session,
+                ReadPreference readPreference,
+                DatabaseNamespace databaseNamespace,
+                BsonDocument command,
+                IEnumerable<Type1CommandMessageSection> commandPayloads,
+                IElementNameValidator commandValidator,
+                BsonDocument additionalOptions,
+                Action<IMessageEncoderPostProcessor> postWriteAction,
+                CommandResponseHandling responseHandling,
+                IBsonSerializer<TResult> resultSerializer,
+                MessageEncoderSettings messageEncoderSettings,
+                CancellationToken cancellationToken)
+            {
                 var protocol = new CommandWireProtocol<TResult>(
                     CreateClusterClockAdvancingCoreSession(session),
                     readPreference,
                     databaseNamespace,
                     command,
+                    commandPayloads,
                     commandValidator,
                     additionalOptions,
+                    postWriteAction,
                     responseHandling,
-                    slaveOk,
                     resultSerializer,
                     messageEncoderSettings);
 
-                return ExecuteProtocolAsync(protocol, cancellationToken);
+                return ExecuteProtocolAsync(protocol, session, cancellationToken);
             }
 
             public void Dispose()
@@ -729,6 +963,20 @@ namespace MongoDB.Driver.Core.Servers
                 }
             }
 
+            private TResult ExecuteProtocol<TResult>(IWireProtocol<TResult> protocol, ICoreSession session, CancellationToken cancellationToken)
+            {
+                try
+                {
+                    return protocol.Execute(_connection, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    MarkSessionDirtyIfNeeded(session, ex);
+                    _server.HandleChannelException(_connection, ex);
+                    throw;
+                }
+            }
+
             private async Task ExecuteProtocolAsync(IWireProtocol protocol, CancellationToken cancellationToken)
             {
                 try
@@ -754,11 +1002,46 @@ namespace MongoDB.Driver.Core.Servers
                     throw;
                 }
             }
+            
+            private async Task<TResult> ExecuteProtocolAsync<TResult>(IWireProtocol<TResult> protocol, ICoreSession session, CancellationToken cancellationToken)
+            {
+                try
+                {
+                    return await protocol.ExecuteAsync(_connection, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    MarkSessionDirtyIfNeeded(session, ex);
+                    _server.HandleChannelException(_connection, ex);
+                    throw;
+                }
+            }
 
             public IChannelHandle Fork()
             {
                 ThrowIfDisposed();
                 return new ServerChannel(_server, _connection.Fork());
+            }
+
+            private ReadPreference GetEffectiveReadPreference(bool slaveOk, ReadPreference readPreference)
+            {
+                if (_server._clusterConnectionMode == ClusterConnectionMode.Direct && _server.Description.Type != ServerType.ShardRouter)
+                {
+                    return ReadPreference.PrimaryPreferred;
+                }
+
+                if (readPreference == null)
+                {
+                    return slaveOk ? ReadPreference.SecondaryPreferred : ReadPreference.Primary;
+                }
+
+                var impliedSlaveOk = readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary;
+                if (slaveOk != impliedSlaveOk)
+                {
+                    throw new ArgumentException($"slaveOk {slaveOk} is inconsistent with read preference mode: {readPreference.ReadPreferenceMode}.");
+                }
+
+                return readPreference;
             }
 
             private bool GetEffectiveSlaveOk(bool slaveOk)
@@ -769,6 +1052,14 @@ namespace MongoDB.Driver.Core.Servers
                 }
 
                 return slaveOk;
+            }
+
+            private void MarkSessionDirtyIfNeeded(ICoreSession session, Exception ex)
+            {
+                if (ex is MongoConnectionException)
+                {
+                    session.MarkDirty();
+                }
             }
 
             private void ThrowIfDisposed()

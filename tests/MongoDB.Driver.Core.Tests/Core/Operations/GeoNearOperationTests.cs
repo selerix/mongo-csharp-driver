@@ -20,7 +20,9 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
+using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -178,16 +180,29 @@ namespace MongoDB.Driver.Core.Operations
         [Theory]
         [ParameterAttributeData]
         public void MaxTime_get_and_set_should_work(
-            [Values(null, 1, 2)]
-            int? seconds)
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings);
-            var value = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             subject.MaxTime = value;
             var result = subject.MaxTime;
 
             result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]
@@ -415,15 +430,17 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         [Theory]
-        [ParameterAttributeData]
-        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(
-            [Values(null, 1, 2)]
-            int? seconds)
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
         {
-            var maxTime = seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null;
             var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings)
             {
-                MaxTime = maxTime
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
             };
 
             var connectionDescription = OperationTestHelper.CreateConnectionDescription(Feature.Collation.FirstSupportedVersion);
@@ -435,9 +452,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 { "geoNear", _collectionNamespace.CollectionName },
                 { "near", new BsonArray { 1, 2 } },
-                { "maxTimeMS", () => seconds.Value * 1000, seconds.HasValue }
+                { "maxTimeMS", expectedMaxTimeMS }
             };
             result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Theory]
@@ -583,7 +601,7 @@ namespace MongoDB.Driver.Core.Operations
             [Values(false, true)]
             bool async)
         {
-            RequireServer.Check();
+            RequireServer.Check().Supports(Feature.GeoNearCommand);
             EnsureTestData();
             var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings);
 
@@ -601,7 +619,7 @@ namespace MongoDB.Driver.Core.Operations
             [Values(false, true)]
             bool async)
         {
-            RequireServer.Check().Supports(Feature.Collation);
+            RequireServer.Check().Supports(Feature.Collation, Feature.GeoNearCommand);
             EnsureTestData();
             var collation = new Collation("en_US", caseLevel: caseSensitive, strength: CollationStrength.Primary);
             var filter = BsonDocument.Parse("{ x : 'x' }");
@@ -622,11 +640,28 @@ namespace MongoDB.Driver.Core.Operations
         public void Execute_should_send_session_id_when_supported(
             [Values(false, true)] bool async)
         {
-            RequireServer.Check();
+            RequireServer.Check().Supports(Feature.GeoNearCommand);
             EnsureTestData();
             var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings);
 
             VerifySessionIdWasSentWhenSupported(subject, "geoNear", async);
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.FailPoints, Feature.GeoNearCommand).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var subject = new GeoNearOperation<BsonDocument>(_collectionNamespace, _near, _resultSerializer, _messageEncoderSettings);
+            subject.MaxTime = TimeSpan.FromSeconds(9001);
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
         }
 
         // helper methods

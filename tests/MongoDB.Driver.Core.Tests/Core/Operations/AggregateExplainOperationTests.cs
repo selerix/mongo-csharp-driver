@@ -20,6 +20,7 @@ using MongoDB.Bson;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -117,16 +118,32 @@ namespace MongoDB.Driver.Core.Operations
             result.Should().BeSameAs(value);
         }
 
-        [Fact]
-        public void MaxTime_get_and_set_should_work()
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_get_and_set_should_work(
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var subject = new AggregateExplainOperation(_collectionNamespace, __pipeline, _messageEncoderSettings);
-            var value = TimeSpan.FromSeconds(2);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             subject.MaxTime = value;
             var result = subject.MaxTime;
 
             result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var subject = new AggregateExplainOperation(_collectionNamespace, __pipeline, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Fact]
@@ -239,15 +256,18 @@ namespace MongoDB.Driver.Core.Operations
             result.Should().Be(expectedResult);
         }
 
-        [SkippableTheory]
-        [ParameterAttributeData]
-        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(
-            [Values(1, 2)]
-            int milliseconds)
+        [Theory]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
         {
             var subject = new AggregateExplainOperation(_collectionNamespace, __pipeline, _messageEncoderSettings)
             {
-                MaxTime = TimeSpan.FromMilliseconds(milliseconds)
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
             };
 
             var result = subject.CreateCommand(null);
@@ -257,9 +277,10 @@ namespace MongoDB.Driver.Core.Operations
                 { "aggregate", _collectionNamespace.CollectionName },
                 { "explain", true },
                 { "pipeline", new BsonArray(__pipeline) },
-                { "maxTimeMS", milliseconds }
+                { "maxTimeMS", expectedMaxTimeMS }
             };
             result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Fact]
@@ -339,6 +360,23 @@ namespace MongoDB.Driver.Core.Operations
             var exception = Record.Exception(() => ExecuteOperation(subject, async));
 
             exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.AggregateExplain, Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            
+            var subject = new AggregateExplainOperation(_collectionNamespace, __pipeline, _messageEncoderSettings) { MaxTime = TimeSpan.FromSeconds(9001) };
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
         }
 
         [SkippableTheory]

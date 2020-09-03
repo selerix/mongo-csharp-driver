@@ -19,6 +19,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Bindings;
+using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Operations;
 using Moq;
 
@@ -177,11 +178,12 @@ namespace MongoDB.Driver.Tests
 
         public IClientSessionHandle StartImplicitSession(CancellationToken cancellationToken)
         {
+            var cluster = Mock.Of<ICluster>();
             var options = new ClientSessionOptions();
-            var serverSession = new ServerSession();
-            var session = new ClientSession(_client, options, serverSession, isImplicit: true);
-            var handle = new ClientSessionHandle(session);
-            return handle;
+            var coreServerSession = new CoreServerSession();
+            var coreSession = new CoreSession(cluster, coreServerSession, options.ToCore(isImplicit: true));
+            var coreSessionHandle = new CoreSessionHandle(coreSession);
+            return new ClientSessionHandle(_client, options, coreSessionHandle);
         }
 
         public Task<IClientSessionHandle> StartImplicitSessionAsync(CancellationToken cancellationToken)

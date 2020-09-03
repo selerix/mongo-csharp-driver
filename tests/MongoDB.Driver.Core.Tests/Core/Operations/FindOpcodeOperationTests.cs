@@ -20,7 +20,10 @@ using FluentAssertions;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
+using MongoDB.Driver.Core.Clusters;
+using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Servers;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 using Xunit;
@@ -118,7 +121,9 @@ namespace MongoDB.Driver.Core.Operations
             subject.Hint.Should().BeNull();
             subject.Limit.Should().NotHaveValue();
             subject.Max.Should().BeNull();
+#pragma warning disable 618
             subject.MaxScan.Should().NotHaveValue();
+#pragma warning restore
             subject.MaxTime.Should().NotHaveValue();
             subject.Modifiers.Should().BeNull();
             subject.Min.Should().BeNull();
@@ -127,7 +132,9 @@ namespace MongoDB.Driver.Core.Operations
             subject.Projection.Should().BeNull();
             subject.ShowRecordId.Should().NotHaveValue();
             subject.Skip.Should().NotHaveValue();
+#pragma warning disable 618
             subject.Snapshot.Should().NotHaveValue();
+#pragma warning restore
             subject.Sort.Should().BeNull();
         }
 
@@ -155,14 +162,20 @@ namespace MongoDB.Driver.Core.Operations
             action.ShouldThrow<ArgumentNullException>().And.ParamName.Should().Be("resultSerializer");
         }
 
-        [Fact]
-        public void CreateWrappedQuery_should_create_the_correct_query_when_not_connected_to_a_shard_router()
+        [Theory]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateWrappedQuery_should_create_the_correct_query_when_not_connected_to_a_shard_router(long maxTimeTicks, int expectedMaxTimeMS)
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings)
             {
                 Comment = "funny",
                 Filter = BsonDocument.Parse("{x: 1}"),
-                MaxTime = TimeSpan.FromSeconds(20),
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks),
                 Modifiers = BsonDocument.Parse("{$comment: \"notfunny\", $snapshot: true}"),
                 Projection = BsonDocument.Parse("{y: 1}"),
                 Sort = BsonDocument.Parse("{a: 1}")
@@ -173,7 +186,7 @@ namespace MongoDB.Driver.Core.Operations
                 { "$query", BsonDocument.Parse("{x: 1}") },
                 { "$orderby", BsonDocument.Parse("{a: 1}") },
                 { "$comment", "funny" },
-                { "$maxTimeMS", 20000 },
+                { "$maxTimeMS", expectedMaxTimeMS },
                 { "$snapshot", true }
             };
 
@@ -181,16 +194,23 @@ namespace MongoDB.Driver.Core.Operations
             var result = subject.CreateWrappedQuery(ServerType.ReplicaSetArbiter, ReadPreference.Secondary);
 
             result.Should().Be(expectedResult);
+            result["$maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
-        [Fact]
-        public void CreateWrappedQuery_should_create_the_correct_query_when_connected_to_a_shard_router()
+        [Theory]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateWrappedQuery_should_create_the_correct_query_when_connected_to_a_shard_router(long maxTimeTicks, int expectedMaxTimeMS)
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings)
             {
                 Comment = "funny",
                 Filter = BsonDocument.Parse("{x: 1}"),
-                MaxTime = TimeSpan.FromSeconds(20),
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks),
                 Modifiers = BsonDocument.Parse("{$comment: \"notfunny\", $snapshot: true}"),
                 Projection = BsonDocument.Parse("{y: 1}"),
                 Sort = BsonDocument.Parse("{a: 1}")
@@ -202,13 +222,14 @@ namespace MongoDB.Driver.Core.Operations
                 { "$readPreference", BsonDocument.Parse("{mode: \"secondary\"}") },
                 { "$orderby", BsonDocument.Parse("{a: 1}") },
                 { "$comment", "funny" },
-                { "$maxTimeMS", 20000 },
+                { "$maxTimeMS", expectedMaxTimeMS },
                 { "$snapshot", true }
             };
 
             var result = subject.CreateWrappedQuery(ServerType.ShardRouter, ReadPreference.Secondary);
 
             result.Should().Be(expectedResult);
+            result["$maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Theory]
@@ -223,6 +244,23 @@ namespace MongoDB.Driver.Core.Operations
             var result = subject.CursorType;
 
             result.Should().Be(value);
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            subject.MaxTime = TimeSpan.FromSeconds(9001);
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
         }
 
         [SkippableFact]
@@ -244,7 +282,9 @@ namespace MongoDB.Driver.Core.Operations
             [Values(1, 5, 6, 12)] int limit)
         {
             RequireServer.Check().VersionLessThan("3.2.0");
-            var collectionNamespace = CoreTestConfiguration.GetCollectionNamespaceForTestMethod();
+            var collectionNamespace = CoreTestConfiguration.GetCollectionNamespaceForTestMethod(
+                className: GetType().Name,
+                methodName: nameof(ExecuteAsync_should_find_all_the_documents_matching_the_query_when_limit_is_used));
             for (var id = 1; id <= limit + 1; id++)
             {
                 var document = new BsonDocument { { "id", id }, { "filler", new string('x', 1000000) } }; // about 1MB big
@@ -310,7 +350,7 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
-            Func<Task> action = () => subject.ExecuteAsync(null, CancellationToken.None);
+            Func<Task> action = () => subject.ExecuteAsync(binding: null, CancellationToken.None);
 
             action.ShouldThrow<ArgumentNullException>().And.ParamName.Should().Be("binding");
         }
@@ -409,8 +449,10 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
+#pragma warning disable 618
             subject.MaxScan = value;
             var result = subject.MaxScan;
+#pragma warning restore
 
             result.Should().Be(value);
         }
@@ -418,16 +460,29 @@ namespace MongoDB.Driver.Core.Operations
         [Theory]
         [ParameterAttributeData]
         public void MaxTime_get_and_set_should_work(
-            [Values(null, 1)]
-            int? seconds)
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
-            var value = seconds == null ? (TimeSpan?)null : TimeSpan.FromSeconds(seconds.Value);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
             subject.MaxTime = value;
             var result = subject.MaxTime;
 
             result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]
@@ -577,9 +632,11 @@ namespace MongoDB.Driver.Core.Operations
         {
             var subject = new FindOpcodeOperation<BsonDocument>(_collectionNamespace, BsonDocumentSerializer.Instance, _messageEncoderSettings);
 
+#pragma warning disable 618
             subject.Snapshot = value;
             var result = subject.Snapshot;
-
+#pragma warning restore
+        
             result.Should().Be(value);
         }
 

@@ -24,6 +24,7 @@ using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Shared;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -41,6 +42,7 @@ namespace MongoDB.Driver.Core.Operations
         private TimeSpan? _maxTime;
         private MessageEncoderSettings _messageEncoderSettings;
         private ReadConcern _readConcern = ReadConcern.Default;
+        private bool _retryRequested;
         private IBsonSerializer<TValue> _valueSerializer;
 
         // constructors
@@ -141,6 +143,16 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         /// <summary>
+        /// Gets or sets a value indicating whether to retry.
+        /// </summary>
+        /// <value>Whether to retry.</value>
+        public bool RetryRequested
+        {
+            get => _retryRequested;
+            set => _retryRequested = value;
+        }
+
+        /// <summary>
         /// Gets the value serializer.
         /// </summary>
         /// <value>
@@ -156,12 +168,11 @@ namespace MongoDB.Driver.Core.Operations
         public IAsyncCursor<TValue> Execute(IReadBinding binding, CancellationToken cancellationToken)
         {
             Ensure.IsNotNull(binding, nameof(binding));
-            using (var channelSource = binding.GetReadChannelSource(cancellationToken))
-            using (var channel = channelSource.GetChannel(cancellationToken))
-            using (var channelBinding = new ChannelReadBinding(channelSource.Server, channel, binding.ReadPreference, binding.Session.Fork()))
+
+            using (var context = RetryableReadContext.Create(binding, _retryRequested, cancellationToken))
             {
-                var operation = CreateOperation(channel, channelBinding);
-                var values = operation.Execute(channelBinding, cancellationToken);
+                var operation = CreateOperation(context);
+                var values = operation.Execute(context, cancellationToken);
                 return new SingleBatchAsyncCursor<TValue>(values);
             }
         }
@@ -170,12 +181,11 @@ namespace MongoDB.Driver.Core.Operations
         public async Task<IAsyncCursor<TValue>> ExecuteAsync(IReadBinding binding, CancellationToken cancellationToken)
         {
             Ensure.IsNotNull(binding, nameof(binding));
-            using (var channelSource = await binding.GetReadChannelSourceAsync(cancellationToken).ConfigureAwait(false))
-            using (var channel = await channelSource.GetChannelAsync(cancellationToken).ConfigureAwait(false))
-            using (var channelBinding = new ChannelReadBinding(channelSource.Server, channel, binding.ReadPreference, binding.Session.Fork()))
+
+            using (var context = await RetryableReadContext.CreateAsync(binding, _retryRequested, cancellationToken).ConfigureAwait(false))
             {
-                var operation = CreateOperation(channel, channelBinding);
-                var values = await operation.ExecuteAsync(channelBinding, cancellationToken).ConfigureAwait(false);
+                var operation = CreateOperation(context);
+                var values = await operation.ExecuteAsync(context, cancellationToken).ConfigureAwait(false);
                 return new SingleBatchAsyncCursor<TValue>(values);
             }
         }
@@ -186,25 +196,27 @@ namespace MongoDB.Driver.Core.Operations
             Feature.ReadConcern.ThrowIfNotSupported(connectionDescription.ServerVersion, _readConcern);
             Feature.Collation.ThrowIfNotSupported(connectionDescription.ServerVersion, _collation);
 
-            var command = new BsonDocument
+            var readConcern = ReadConcernHelper.GetReadConcernForCommand(session, connectionDescription, _readConcern);
+            return new BsonDocument
             {
                 { "distinct", _collectionNamespace.CollectionName },
                 { "key", _fieldName },
                 { "query", _filter, _filter != null },
-                { "maxTimeMS", () => _maxTime.Value.TotalMilliseconds, _maxTime.HasValue },
-                { "collation", () => _collation.ToBsonDocument(), _collation != null }
+                { "maxTimeMS", () => MaxTimeHelper.ToMaxTimeMS(_maxTime.Value), _maxTime.HasValue },
+                { "collation", () => _collation.ToBsonDocument(), _collation != null },
+                { "readConcern", readConcern, readConcern != null }
             };
-
-            ReadConcernHelper.AppendReadConcern(command, _readConcern, connectionDescription, session);
-            return command;
         }
 
-        private ReadCommandOperation<TValue[]> CreateOperation(IChannel channel, IBinding binding)
+        private ReadCommandOperation<TValue[]> CreateOperation(RetryableReadContext context)
         {
-            var command = CreateCommand(channel.ConnectionDescription, binding.Session);
+            var command = CreateCommand(context.Channel.ConnectionDescription, context.Binding.Session);
             var valueArraySerializer = new ArraySerializer<TValue>(_valueSerializer);
             var resultSerializer = new ElementDeserializer<TValue[]>("values", valueArraySerializer);
-            return new ReadCommandOperation<TValue[]>(_collectionNamespace.DatabaseNamespace, command, resultSerializer, _messageEncoderSettings);
+            return new ReadCommandOperation<TValue[]>(_collectionNamespace.DatabaseNamespace, command, resultSerializer, _messageEncoderSettings)
+            {
+                RetryRequested = _retryRequested // might be overridden by retryable read context
+            };
         }
     }
 }

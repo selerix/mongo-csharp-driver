@@ -195,11 +195,11 @@ namespace MongoDB.Driver.Core.Operations
             var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion);
             var session = OperationTestHelper.CreateSession();
 
-            var result = subjectReflector.CreateCommand(connectionDescription, session);
+            var result = subjectReflector.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument { {"replace", _outputCollectionNamespace.CollectionName }, { "db", _databaseNamespace.DatabaseName } } },
@@ -227,11 +227,11 @@ namespace MongoDB.Driver.Core.Operations
             var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion);
             var session = OperationTestHelper.CreateSession();
 
-            var result = subjectReflector.CreateCommand(connectionDescription, session);
+            var result = subjectReflector.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
-                { "mapreduce", _collectionNamespace.CollectionName },
+                { "mapReduce", _collectionNamespace.CollectionName },
                 { "map", _mapFunction },
                 { "reduce", _reduceFunction },
                 { "out", new BsonDocument { {"replace", _outputCollectionNamespace.CollectionName }, { "db", _databaseNamespace.DatabaseName } } },
@@ -575,7 +575,7 @@ namespace MongoDB.Driver.Core.Operations
             EnsureTestData();
             var subject = new MapReduceOutputToCollectionOperation(_collectionNamespace, _outputCollectionNamespace, _mapFunction, _reduceFunction, _messageEncoderSettings);
 
-            VerifySessionIdWasSentWhenSupported(subject, "mapreduce", async);
+            VerifySessionIdWasSentWhenSupported(subject, "mapReduce", async);
         }
 
         // helper methods
@@ -601,10 +601,10 @@ namespace MongoDB.Driver.Core.Operations
             }
 
             // methods
-            public BsonDocument CreateCommand(ConnectionDescription connectionDescription, ICoreSession session)
+            public BsonDocument CreateCommand(ICoreSessionHandle session, ConnectionDescription connectionDescription)
             {
                 var method = typeof(MapReduceOutputToCollectionOperation).GetMethod("CreateCommand", BindingFlags.NonPublic | BindingFlags.Instance);
-                return (BsonDocument)method.Invoke(_instance, new object[] { connectionDescription, session });
+                return (BsonDocument)method.Invoke(_instance, new object[] { session, connectionDescription });
             }
 
             public BsonDocument CreateOutputOptions()

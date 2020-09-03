@@ -14,7 +14,10 @@
 */
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using MongoDB.Bson;
+using MongoDB.Driver.Core.Bindings;
 
 namespace MongoDB.Driver
 {
@@ -49,6 +52,14 @@ namespace MongoDB.Driver
         bool IsImplicit { get; }
 
         /// <summary>
+        /// Gets a value indicating whether this instance is in a transaction.
+        /// </summary>
+        /// <value>
+        ///   <c>true</c> if this instance is in a transaction; otherwise, <c>false</c>.
+        /// </value>
+        bool IsInTransaction { get; }
+
+        /// <summary>
         /// Gets the operation time.
         /// </summary>
         /// <value>
@@ -72,7 +83,28 @@ namespace MongoDB.Driver
         /// </value>
         IServerSession ServerSession { get; }
 
+        /// <summary>
+        /// Gets the wrapped core session (intended for internal use only).
+        /// </summary>
+        /// <value>
+        /// The wrapped core session.
+        /// </value>
+        ICoreSessionHandle WrappedCoreSession { get; }
+
         // methods
+        /// <summary>
+        /// Aborts the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void AbortTransaction(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Aborts the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A Task.</returns>
+        Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
+
         /// <summary>
         /// Advances the cluster time.
         /// </summary>
@@ -84,6 +116,45 @@ namespace MongoDB.Driver
         /// </summary>
         /// <param name="newOperationTime">The new operation time.</param>
         void AdvanceOperationTime(BsonTimestamp newOperationTime);
+
+        /// <summary>
+        /// Commits the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void CommitTransaction(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Commits the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A Task.</returns>
+        Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Starts a transaction.
+        /// </summary>
+        /// <param name="transactionOptions">The transaction options.</param>
+        void StartTransaction(TransactionOptions transactionOptions = null);
+
+        /// <summary>
+        /// Executes a callback within a transaction, with retries if needed.
+        /// </summary>
+        /// <param name="callback">The user defined callback.</param>
+        /// <param name="transactionOptions">The transaction options.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <typeparam name="TResult">The type of callback result.</typeparam>
+        /// <returns>The callback result.</returns>
+        TResult WithTransaction<TResult>(Func<IClientSessionHandle, CancellationToken, TResult> callback, TransactionOptions transactionOptions = null, CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Executes a callback within a transaction, with retries if needed.
+        /// </summary>
+        /// <param name="callbackAsync">The user defined callback.</param>
+        /// <param name="transactionOptions">The transaction options.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <typeparam name="TResult">The type of callback result.</typeparam>
+        /// <returns>The callback result.</returns>
+        Task<TResult> WithTransactionAsync<TResult>(Func<IClientSessionHandle, CancellationToken, Task<TResult>> callbackAsync, TransactionOptions transactionOptions = null, CancellationToken cancellationToken = default(CancellationToken));
     }
 
     /// <summary>

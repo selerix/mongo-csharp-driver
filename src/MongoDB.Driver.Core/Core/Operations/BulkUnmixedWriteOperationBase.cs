@@ -13,6 +13,7 @@
 * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -114,6 +115,7 @@ namespace MongoDB.Driver.Core.Operations
         // public methods
         public BulkWriteOperationResult Execute(RetryableWriteContext context, CancellationToken cancellationToken)
         {
+            EnsureCollationIsSupportedIfAnyRequestHasCollation(context, _requests);
             if (Feature.WriteCommands.IsSupported(context.Channel.ConnectionDescription.ServerVersion))
             {
                 return ExecuteBatches(context, cancellationToken);
@@ -137,6 +139,7 @@ namespace MongoDB.Driver.Core.Operations
 
         public Task<BulkWriteOperationResult> ExecuteAsync(RetryableWriteContext context, CancellationToken cancellationToken)
         {
+            EnsureCollationIsSupportedIfAnyRequestHasCollation(context, _requests);
             if (Feature.WriteCommands.IsSupported(context.Channel.ConnectionDescription.ServerVersion))
             {
                 return ExecuteBatchesAsync(context, cancellationToken);
@@ -163,15 +166,7 @@ namespace MongoDB.Driver.Core.Operations
 
         protected abstract IExecutableInRetryableWriteContext<BulkWriteOperationResult> CreateEmulator();
 
-        protected WriteConcern GetBatchWriteConcern(Batch batch)
-        {
-            var writeConcern = _writeConcern;
-            if (!writeConcern.IsAcknowledged && _isOrdered && !batch.Requests.AllItemsWereProcessed)
-            {
-                writeConcern = WriteConcern.W1;
-            }
-            return writeConcern;
-        }
+        protected abstract bool RequestHasCollation(TWriteRequest request);
 
         // private methods
         private BulkWriteBatchResult CreateBatchResult(Batch batch, BsonDocument writeCommandResult)
@@ -186,17 +181,47 @@ namespace MongoDB.Driver.Core.Operations
                 indexMap);
         }
 
+        private void EnsureCollationIsSupportedIfAnyRequestHasCollation(RetryableWriteContext context, IEnumerable<TWriteRequest> requests)
+        {
+            var serverVersion = context.Channel.ConnectionDescription.ServerVersion;
+            if (!Feature.Collation.IsSupported(serverVersion))
+            {
+                foreach (var request in requests)
+                {
+                    if (RequestHasCollation(request))
+                    {
+                        throw new NotSupportedException($"Server version {serverVersion} does not support collations.");
+                    }
+                }
+            }
+        }
         private BulkWriteBatchResult ExecuteBatch(RetryableWriteContext context, Batch batch, CancellationToken cancellationToken)
         {
             var operation = CreateBatchOperation(batch);
-            var operationResult = RetryableWriteOperationExecutor.Execute(operation, context, cancellationToken);
+            BsonDocument operationResult;
+            try
+            {
+                operationResult = RetryableWriteOperationExecutor.Execute(operation, context, cancellationToken);
+            }
+            catch (MongoWriteConcernException exception) when (exception.IsWriteConcernErrorOnly())
+            {
+                operationResult = exception.Result;
+            }
             return CreateBatchResult(batch, operationResult);
         }
 
         private async Task<BulkWriteBatchResult> ExecuteBatchAsync(RetryableWriteContext context, Batch batch, CancellationToken cancellationToken)
         {
             var operation = CreateBatchOperation(batch);
-            var operationResult = await RetryableWriteOperationExecutor.ExecuteAsync(operation, context, cancellationToken).ConfigureAwait(false);
+            BsonDocument operationResult;
+            try
+            {
+                operationResult = await RetryableWriteOperationExecutor.ExecuteAsync(operation, context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (MongoWriteConcernException exception) when (exception.IsWriteConcernErrorOnly())
+            {
+                operationResult = exception.Result;
+            }
             return CreateBatchResult(batch, operationResult);
         }
 

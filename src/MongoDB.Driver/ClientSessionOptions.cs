@@ -13,6 +13,8 @@
 * limitations under the License.
 */
 
+using MongoDB.Driver.Core.Bindings;
+
 namespace MongoDB.Driver
 {
     /// <summary>
@@ -20,10 +22,28 @@ namespace MongoDB.Driver
     /// </summary>
     public class ClientSessionOptions
     {
+        // public properties
         /// <summary>
         /// When true or unspecified, an application will read its own writes and subsequent
         /// reads will never observe an earlier version of the data.
         /// </summary>
         public bool? CausalConsistency { get; set; }
+
+        /// <summary>
+        /// Gets or sets the default transaction options.
+        /// </summary>
+        /// <value>
+        /// The default transaction options.
+        /// </value>
+        public TransactionOptions DefaultTransactionOptions { get; set; }
+
+        // internal methods
+        internal CoreSessionOptions ToCore(bool isImplicit = false)
+        {
+            return new CoreSessionOptions(
+                isCausallyConsistent: CausalConsistency ?? true,
+                isImplicit: isImplicit,
+                defaultTransactionOptions: DefaultTransactionOptions);
+        }
     }
 }

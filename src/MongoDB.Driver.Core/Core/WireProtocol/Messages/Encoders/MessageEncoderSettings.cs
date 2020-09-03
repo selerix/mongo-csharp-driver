@@ -13,12 +13,8 @@
 * limitations under the License.
 */
 
-using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
 {
@@ -28,6 +24,16 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
     public static class MessageEncoderSettingsName
     {
         // encoder settings used by the binary encoders
+        /// <summary>
+        /// The name of the binary document field decryptor setting.
+        /// </summary>
+        public const string BinaryDocumentFieldDecryptor = "BinaryDocumentFieldDecryptor";
+
+        /// <summary>
+        /// The name of the binary document field encryptor setting.
+        /// </summary>
+        public const string BinaryDocumentFieldEncryptor = "BinaryDocumentFieldEncryptor";
+
         /// <summary>
         /// The name of the FixOldBinarySubTypeOnInput setting.
         /// </summary>
@@ -54,9 +60,19 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
         public const string MaxDocumentSize = "MaxDocumentSize";
 
         /// <summary>
+        /// The name of the MaxMessageSize setting.
+        /// </summary>
+        public const string MaxMessageSize = "MaxMessageSize";
+
+        /// <summary>
         /// The name of the MaxSerializationDepth setting.
         /// </summary>
         public const string MaxSerializationDepth = "MaxSerializationDepth";
+
+        /// <summary>
+        /// The maximum wire document size.
+        /// </summary>
+        public const string MaxWireDocumentSize = nameof(MaxWireDocumentSize);
 
         /// <summary>
         /// The name of the ReadEncoding setting.
@@ -119,6 +135,20 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
             return this;
         }
 
+        /// <summary>
+        /// Clones this instance.
+        /// </summary>
+        /// <returns>The clone.</returns>
+        public MessageEncoderSettings Clone()
+        {
+            var clone = new MessageEncoderSettings();
+            foreach (var key in _settings.Keys)
+            {
+                clone.Add(key, _settings[key]);
+            }
+            return clone;
+        }
+
         /// <inheritdoc/>
         public IEnumerator<KeyValuePair<string, object>> GetEnumerator()
         {
@@ -148,6 +178,16 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
             {
                 return defaultValue;
             }
+        }
+
+        /// <summary>
+        /// Sets the specified setting.
+        /// </summary>
+        /// <param name="name">The name.</param>
+        /// <param name="value">The value.</param>
+        public void Set(string name, object value)
+        {
+            _settings[name] = value;
         }
     }
 }

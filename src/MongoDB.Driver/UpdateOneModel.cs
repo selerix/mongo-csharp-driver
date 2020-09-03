@@ -16,6 +16,7 @@
 using MongoDB.Driver.Core.Misc;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MongoDB.Driver
 {
@@ -23,7 +24,7 @@ namespace MongoDB.Driver
     /// Model for updating a single document.
     /// </summary>
     /// <typeparam name="TDocument">The type of the document.</typeparam>
-#if NET45
+#if NET452
     [Serializable]
 #endif
     public sealed class UpdateOneModel<TDocument> : WriteModel<TDocument>
@@ -98,6 +99,15 @@ namespace MongoDB.Driver
         public override WriteModelType ModelType
         {
             get { return WriteModelType.UpdateOne; }
+        }
+
+        /// <inheritdoc />
+        public override void ThrowIfNotValid()
+        {
+            if (_update is PipelineUpdateDefinition<TDocument> && (_arrayFilters != null && _arrayFilters.Any()))
+            {
+                throw new NotSupportedException("An arrayfilter is not supported in the pipeline-style update.");
+            }
         }
     }
 }

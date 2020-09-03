@@ -9,18 +9,17 @@ type = "index"
 
 The [Getting Started]({{< relref "getting_started\index.md" >}}) guide contains information about system requirements, installation, and a simple tutorial to get up and running quickly.
 
+## What's new in 2.10.0
 
-## What's new in 2.5
+{{% note %}}
+If you are using unacknowledged writes (also known as w:0 writes) with versions 2.10.0 or 2.10.1 of the driver, we strongly recommend you upgrade to version 2.10.2 as soon as possible, to obtain the fix for a critical issue: https://jira.mongodb.org/browse/CSHARP-2960
+{{% /note %}}
 
 The [What's New]({{< relref "what_is_new.md" >}}) section contains the major new features of the driver.
-
-The main new feature is support for version 3.6 of the server.
-
 
 ## Upgrading
 
 If you are coming from the 2.0.x series of the driver, consult the [upgrading]({{< relref "upgrading.md" >}}) documentation on changes.
-
 
 ## Reference
 

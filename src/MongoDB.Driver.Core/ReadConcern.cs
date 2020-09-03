@@ -25,10 +25,17 @@ namespace MongoDB.Driver
     /// </summary>
     public sealed class ReadConcern : IEquatable<ReadConcern>, IConvertibleToBsonDocument
     {
+        private static readonly ReadConcern __available = new ReadConcern(ReadConcernLevel.Available);
         private static readonly ReadConcern __default = new ReadConcern();
         private static readonly ReadConcern __linearizable = new ReadConcern(ReadConcernLevel.Linearizable);
         private static readonly ReadConcern __local = new ReadConcern(ReadConcernLevel.Local);
         private static readonly ReadConcern __majority = new ReadConcern(ReadConcernLevel.Majority);
+        private static readonly ReadConcern __snapshot = new ReadConcern(ReadConcernLevel.Snapshot);
+
+        /// <summary>
+        /// Gets an available read concern.
+        /// </summary>
+        public static ReadConcern Available => __available;
 
         /// <summary>
         /// Gets a default read concern.
@@ -51,6 +58,11 @@ namespace MongoDB.Driver
         public static ReadConcern Majority => __majority;
 
         /// <summary>
+        /// Gets a snapshot read concern.
+        /// </summary>
+        public static ReadConcern Snapshot => __snapshot;
+
+        /// <summary>
         /// Creates a read concern from a document.
         /// </summary>
         /// <param name="document">The document.</param>
@@ -65,12 +77,16 @@ namespace MongoDB.Driver
                 var level = (ReadConcernLevel)Enum.Parse(typeof(ReadConcernLevel), (string)levelValue, true);
                 switch (level)
                 {
+                    case ReadConcernLevel.Available:
+                        return ReadConcern.Available;
                     case ReadConcernLevel.Linearizable:
                         return ReadConcern.Linearizable;
                     case ReadConcernLevel.Local:
                         return ReadConcern.Local;
                     case ReadConcernLevel.Majority:
                         return ReadConcern.Majority;
+                    case ReadConcernLevel.Snapshot:
+                        return ReadConcern.Snapshot;
                     default:
                         throw new NotSupportedException($"The level {level} is not supported.");
                 }
@@ -148,6 +164,9 @@ namespace MongoDB.Driver
             {
                 switch (_level.Value)
                 {
+                    case ReadConcernLevel.Available:
+                        level = "available";
+                        break;
                     case ReadConcernLevel.Linearizable:
                         level = "linearizable";
                         break;
@@ -156,6 +175,9 @@ namespace MongoDB.Driver
                         break;
                     case ReadConcernLevel.Majority:
                         level = "majority";
+                        break;
+                    case ReadConcernLevel.Snapshot:
+                        level = "snapshot";
                         break;
                 }
             }

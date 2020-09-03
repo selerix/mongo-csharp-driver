@@ -21,6 +21,7 @@ using MongoDB.Bson;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -73,8 +74,10 @@ namespace MongoDB.Driver.Core.Operations
         {
             var requests = new[] { new CreateIndexRequest(new BsonDocument("x", 1)) };
             var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
@@ -93,8 +96,10 @@ namespace MongoDB.Driver.Core.Operations
                 new CreateIndexRequest(new BsonDocument("y", 1))
             };
             var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
@@ -103,9 +108,36 @@ namespace MongoDB.Driver.Core.Operations
             };
             result.Should().Be(expectedResult);
         }
-
+        
         [Theory]
-        [ParameterAttributeData]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_Set(long maxTimeTicks, int expectedMaxTimeMS)
+        {
+            var requests = new[] { new CreateIndexRequest(new BsonDocument("x", 1)) };
+            var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
+            subject.MaxTime = TimeSpan.FromTicks(maxTimeTicks);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
+
+            var result = subject.CreateCommand(session, connectionDescription);
+
+            var expectedResult = new BsonDocument
+            {
+                { "createIndexes", _collectionNamespace.CollectionName },
+                { "indexes", new BsonArray { requests[0].CreateIndexDocument(null) } },
+                { "maxTimeMS", expectedMaxTimeMS },
+            };
+            result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
+        }
+
+       [Theory]
+       [ParameterAttributeData]
         public void CreateCommand_should_return_expected_result_when_WriteConcern_is_set(
             [Values(1, 2)]
             int w,
@@ -118,9 +150,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 WriteConcern = writeConcern
             };
-            var serverVersion = Feature.CommandsThatWriteAcceptWriteConcern.SupportedOrNotSupportedVersion(isWriteConcernSupported);
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.CommandsThatWriteAcceptWriteConcern.SupportedOrNotSupportedVersion(isWriteConcernSupported));
 
-            var result = subject.CreateCommand(serverVersion);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
@@ -129,6 +162,23 @@ namespace MongoDB.Driver.Core.Operations
                 { "writeConcern", () => writeConcern.ToBsonDocument(), isWriteConcernSupported }
             };
             result.Should().Be(expectedResult);
+        }
+
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.CreateIndexesCommand, Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var requests = new[] { new CreateIndexRequest(new BsonDocument("x", 1)) };
+            var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings) { MaxTime = TimeSpan.FromSeconds(9001) };
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
         }
 
         [SkippableTheory]
@@ -311,6 +361,35 @@ namespace MongoDB.Driver.Core.Operations
             var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
 
             VerifySessionIdWasSentWhenSupported(subject, "createIndexes", async);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_get_and_set_should_work(
+            [Values(null, -10000, 0, 1, 42, 9000, 10000, 10001)] int? maxTimeTicks)
+        {
+            var requests = new[] { new CreateIndexRequest(new BsonDocument("x", 1)) };
+            var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
+            var value = maxTimeTicks == null ? (TimeSpan?)null : TimeSpan.FromTicks(maxTimeTicks.Value);
+            subject.MaxTime = value;
+            var result = subject.MaxTime;
+
+            result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -42, -1)] long maxTimeTicks)
+        {
+            var requests = new[] { new CreateIndexRequest(new BsonDocument("x", 1)) };
+            var subject = new CreateIndexesUsingCommandOperation(_collectionNamespace, requests, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]

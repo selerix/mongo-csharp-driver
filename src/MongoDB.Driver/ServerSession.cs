@@ -15,6 +15,7 @@
 
 using System;
 using MongoDB.Bson;
+using MongoDB.Driver.Core.Misc;
 
 namespace MongoDB.Driver
 {
@@ -24,51 +25,42 @@ namespace MongoDB.Driver
     /// <seealso cref="MongoDB.Driver.IServerSession" />
     internal sealed class ServerSession : IServerSession
     {
-        #region static
-        // private static methods
-        private static BsonDocument GenerateSessionId()
-        {
-            var guid = Guid.NewGuid();
-            var id = new BsonBinaryData(guid, GuidRepresentation.Standard);
-            return new BsonDocument("id", id);
-        }
-        #endregion
-
         // private fields
-        private readonly BsonDocument _id;
-        private DateTime? _lastUsedAt;
-        private long _transactionNumber;
+        private readonly ICoreServerSession _coreServerSession;
 
         // constructors
-        internal ServerSession()
+        public ServerSession(ICoreServerSession coreServerSession)
         {
-            _id = GenerateSessionId();
-            _transactionNumber = 0;
+            _coreServerSession = Ensure.IsNotNull(coreServerSession, nameof(coreServerSession));
         }
 
         // public properties
         /// <inheritdoc />
-        public BsonDocument Id => _id;
+        public BsonDocument Id => _coreServerSession.Id;
 
         /// <inheritdoc />
-        public DateTime? LastUsedAt => _lastUsedAt;
+        public DateTime? LastUsedAt => _coreServerSession.LastUsedAt;
 
         // public methods
         /// <inheritdoc />
+        [Obsolete("Let the driver handle when to advance the transaction number.")]
         public long AdvanceTransactionNumber()
         {
-            return ++_transactionNumber;
+            // do nothing
+            return -1;
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
+            // do nothing (the ServerSession does NOT own the wrapped core server session)
         }
 
         /// <inheritdoc />
+        [Obsolete("Let the driver handle tracking when the session was last used.")]
         public void WasUsed()
         {
-            _lastUsedAt = DateTime.UtcNow;
+            // do nothing
         }
     }
 }

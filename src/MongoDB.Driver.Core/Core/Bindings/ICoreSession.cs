@@ -14,6 +14,8 @@
 */
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using MongoDB.Bson;
 
 namespace MongoDB.Driver.Core.Bindings
@@ -33,6 +35,14 @@ namespace MongoDB.Driver.Core.Bindings
         BsonDocument ClusterTime { get; }
 
         /// <summary>
+        /// Gets the current transaction.
+        /// </summary>
+        /// <value>
+        /// The current transaction.
+        /// </value>
+        CoreTransaction CurrentTransaction { get; }
+
+        /// <summary>
         /// Gets the session Id.
         /// </summary>
         /// <value>
@@ -47,6 +57,14 @@ namespace MongoDB.Driver.Core.Bindings
         ///   <c>true</c> if the session is causally consistent.
         /// </value>
         bool IsCausallyConsistent { get; }
+        
+        /// <summary>
+        /// Gets a value indicate whether this session is dirty.
+        /// </summary>
+        /// <value>
+        ///   <c>true</c> if the session is dirty.
+        /// </value>
+        bool IsDirty { get; }
 
         /// <summary>
         /// Gets a value indicating whether this instance is implicit session.
@@ -57,6 +75,14 @@ namespace MongoDB.Driver.Core.Bindings
         bool IsImplicit { get; }
 
         /// <summary>
+        /// Gets a value indicating whether this instance is in a transaction.
+        /// </summary>
+        /// <value>
+        ///   <c>true</c> if this instance is in a transaction; otherwise, <c>false</c>.
+        /// </value>
+        bool IsInTransaction { get; }
+
+        /// <summary>
         /// Gets the operation time.
         /// </summary>
         /// <value>
@@ -64,7 +90,41 @@ namespace MongoDB.Driver.Core.Bindings
         /// </value>
         BsonTimestamp OperationTime { get; }
 
+        /// <summary>
+        /// Gets the session options.
+        /// </summary>
+        /// <value>
+        /// The session options.
+        /// </value>
+        CoreSessionOptions Options { get; }
+
+        /// <summary>
+        /// Gets the server session.
+        /// </summary>
+        /// <value>
+        /// The server session.
+        /// </value>
+        ICoreServerSession ServerSession { get; }
+
         // methods
+        /// <summary>
+        /// Aborts the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void AbortTransaction(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Aborts the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A Task.</returns>
+        Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// The driver is about to send a command on this session. Called to track session state.
+        /// </summary>
+        void AboutToSendCommand();
+
         /// <summary>
         /// Advances the cluster time.
         /// </summary>
@@ -82,6 +142,30 @@ namespace MongoDB.Driver.Core.Bindings
         /// </summary>
         /// <returns>The transaction id.</returns>
         long AdvanceTransactionNumber();
+
+        /// <summary>
+        /// Commits the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void CommitTransaction(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Commits the transaction.
+        /// </summary>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>A Task.</returns>
+        Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken));
+
+        /// <summary>
+        /// Marks the session as dirty.
+        /// </summary>
+        void MarkDirty();
+
+        /// <summary>
+        /// Starts a transaction.
+        /// </summary>
+        /// <param name="transactionOptions">The transaction options.</param>
+        void StartTransaction(TransactionOptions transactionOptions = null);
 
         /// <summary>
         /// Called by the driver when the session is used (i.e. sent to the server).

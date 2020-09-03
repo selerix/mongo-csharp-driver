@@ -13,8 +13,11 @@
 * limitations under the License.
 */
 
+using System;
+using System.Threading;
 using FluentAssertions;
 using MongoDB.Bson;
+using MongoDB.Bson.TestHelpers.XunitExtensions;
 using Xunit;
 
 namespace MongoDB.Driver.Core.Bindings
@@ -28,8 +31,11 @@ namespace MongoDB.Driver.Core.Bindings
 
             result.ClusterTime.Should().BeNull();
             result.Id.Should().BeNull();
+            result.IsCausallyConsistent.Should().BeFalse();
             result.IsImplicit.Should().BeTrue();
             result.OperationTime.Should().BeNull();
+            result.Options.Should().BeNull();
+            result.ServerSession.Should().BeOfType<NoCoreServerSession>();
         }
 
         [Fact]
@@ -62,6 +68,16 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void CurrentTransaction_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.CurrentTransaction;
+
+            result.Should().BeNull();
+        }
+
+        [Fact]
         public void Id_should_return_expected_result()
         {
             var subject = CreateSubject();
@@ -72,6 +88,16 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
+        public void IsCausallyConsistent_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.IsCausallyConsistent;
+
+            result.Should().BeFalse();
+        }
+
+        [Fact]
         public void IsImplicit_should_return_expected_result()
         {
             var subject = CreateSubject();
@@ -79,6 +105,74 @@ namespace MongoDB.Driver.Core.Bindings
             var result = subject.IsImplicit;
 
             result.Should().BeTrue();
+        }
+
+        [Fact]
+        public void IsInTransaction_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.IsInTransaction;
+
+            result.Should().BeFalse();
+        }
+
+        [Fact]
+        public void OperationTime_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.OperationTime;
+
+            result.Should().BeNull();
+        }
+
+        [Fact]
+        public void Options_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.Options;
+
+            result.Should().BeNull();
+        }
+
+        [Fact]
+        public void ServerSession_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+
+            var result = subject.ServerSession;
+
+            result.Should().BeSameAs(NoCoreServerSession.Instance);
+        }
+
+        [Fact]
+        public void AbortTransaction_should_throw()
+        {
+            var subject = CreateSubject();
+
+            var exception = Record.Exception(() => subject.AbortTransaction(CancellationToken.None));
+
+            exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [Fact]
+        public void AbortTransactionAsync_should_throw()
+        {
+            var subject = CreateSubject();
+
+            var exception = Record.ExceptionAsync(() => subject.AbortTransactionAsync(CancellationToken.None)).GetAwaiter().GetResult();
+
+            exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [Fact]
+        public void AboutToSendCommand_should_do_nothing()
+        {
+            var subject = CreateSubject();
+
+            subject.AboutToSendCommand();
         }
 
         [Fact]
@@ -100,29 +194,56 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         [Fact]
-        public void Dispose_should_do_nothing()
+        public void AdvanceTransactionNumber_should_return_minus_one()
         {
             var subject = CreateSubject();
 
-            subject.Dispose();
+            var result = subject.AdvanceTransactionNumber();
 
-            // verify that no ObjectDisposedExceptions are thrown
-            var clusterTime = subject.ClusterTime;
-            var id = subject.Id;
-            var isImplicit = subject.IsImplicit;
-            var operationTime = subject.OperationTime;
-            subject.AdvanceClusterTime(CreateClusterTime());
-            subject.AdvanceOperationTime(CreateOperationTime());
-            subject.WasUsed();
+            result.Should().Be(-1);
         }
 
         [Fact]
-        public void Dispose_can_be_called_more_than_once()
+        public void CommitTransaction_should_throw()
         {
             var subject = CreateSubject();
 
-            subject.Dispose();
-            subject.Dispose();
+            var exception = Record.Exception(() => subject.CommitTransaction(CancellationToken.None));
+
+            exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [Fact]
+        public void CommitTransactionAsync_should_throw()
+        {
+            var subject = CreateSubject();
+
+            var exception = Record.ExceptionAsync(() => subject.CommitTransactionAsync(CancellationToken.None)).GetAwaiter().GetResult();
+
+            exception.Should().BeOfType<NotSupportedException>();
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void Dispose_should_do_nothing(
+            [Values(1, 2)] int timesCalled)
+        {
+            var subject = CreateSubject();
+
+            for (var i = 0; i < timesCalled; i++)
+            {
+                subject.Dispose();
+            }
+        }
+
+        [Fact]
+        public void StartTransaction_should_throw()
+        {
+            var subject = CreateSubject();
+
+            var exception = Record.Exception(() => subject.StartTransaction());
+
+            exception.Should().BeOfType<NotSupportedException>();
         }
 
         [Fact]

@@ -34,6 +34,10 @@ namespace MongoDB.Driver.Core.WireProtocol
         /// <summary>
         /// Ignore the response from the server.
         /// </summary>
-        Ignore
+        Ignore,
+        /// <summary>
+        /// No response is expected from the server.
+        /// </summary>
+        NoResponseExpected
     }
 }

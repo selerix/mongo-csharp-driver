@@ -15,16 +15,15 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver.Core.Bindings;
+using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Operations.ElementNameValidators;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Shared;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -43,7 +42,7 @@ namespace MongoDB.Driver.Core.Operations
         private BsonDocument _projection;
         private ReturnDocument _returnDocument;
         private BsonDocument _sort;
-        private readonly BsonDocument _update;
+        private readonly BsonValue _update;
 
         // constructors
         /// <summary>
@@ -54,15 +53,11 @@ namespace MongoDB.Driver.Core.Operations
         /// <param name="update">The update.</param>
         /// <param name="resultSerializer">The result serializer.</param>
         /// <param name="messageEncoderSettings">The message encoder settings.</param>
-        public FindOneAndUpdateOperation(CollectionNamespace collectionNamespace, BsonDocument filter, BsonDocument update, IBsonSerializer<TResult> resultSerializer, MessageEncoderSettings messageEncoderSettings)
+        public FindOneAndUpdateOperation(CollectionNamespace collectionNamespace, BsonDocument filter, BsonValue update, IBsonSerializer<TResult> resultSerializer, MessageEncoderSettings messageEncoderSettings)
             : base(collectionNamespace, resultSerializer, messageEncoderSettings)
         {
             _filter = Ensure.IsNotNull(filter, nameof(filter));
-            _update = Ensure.IsNotNull(update, nameof(update));
-            if (_update.ElementCount == 0)
-            {
-                throw new ArgumentException("Updates must have at least 1 update operator.", nameof(update));
-            }
+            _update = EnsureUpdateIsValid(update);
             _returnDocument = ReturnDocument.Before;
         }
 
@@ -123,7 +118,7 @@ namespace MongoDB.Driver.Core.Operations
         public TimeSpan? MaxTime
         {
             get { return _maxTime; }
-            set { _maxTime = value; }
+            set { _maxTime = Ensure.IsNullOrInfiniteOrGreaterThanOrEqualToZero(value, nameof(value)); }
         }
 
         /// <summary>
@@ -168,16 +163,18 @@ namespace MongoDB.Driver.Core.Operations
         /// <value>
         /// The update specification.
         /// </value>
-        public BsonDocument Update
+        public BsonValue Update
         {
             get { return _update; }
         }
 
         // methods
-        internal override BsonDocument CreateCommand(SemanticVersion serverVersion, long? transactionNumber)
+        internal override BsonDocument CreateCommand(ICoreSessionHandle session, ConnectionDescription connectionDescription, long? transactionNumber)
         {
+            var serverVersion = connectionDescription.ServerVersion;
             Feature.Collation.ThrowIfNotSupported(serverVersion, Collation);
 
+            var writeConcern = WriteConcernHelper.GetWriteConcernForCommand(session, WriteConcern, serverVersion, Feature.FindAndModifyWriteConcern);
             return new BsonDocument
             {
                 { "findAndModify", CollectionNamespace.CollectionName },
@@ -187,8 +184,8 @@ namespace MongoDB.Driver.Core.Operations
                 { "sort", _sort, _sort != null },
                 { "fields", _projection, _projection != null },
                 { "upsert", true, _isUpsert },
-                { "maxTimeMS", () => _maxTime.Value.TotalMilliseconds, _maxTime.HasValue },
-                { "writeConcern", () => WriteConcern.ToBsonDocument(), WriteConcern != null && !WriteConcern.IsServerDefault && Feature.FindAndModifyWriteConcern.IsSupported(serverVersion) },
+                { "maxTimeMS", () => MaxTimeHelper.ToMaxTimeMS(_maxTime.Value), _maxTime.HasValue },
+                { "writeConcern", writeConcern, writeConcern != null },
                 { "bypassDocumentValidation", () => _bypassDocumentValidation.Value, _bypassDocumentValidation.HasValue && Feature.BypassDocumentValidation.IsSupported(serverVersion) },
                 { "collation", () => Collation.ToBsonDocument(), Collation != null },
                 { "arrayFilters", () => new BsonArray(_arrayFilters), _arrayFilters != null },
@@ -200,6 +197,38 @@ namespace MongoDB.Driver.Core.Operations
         protected override IElementNameValidator GetCommandValidator()
         {
             return Validator.Instance;
+        }
+
+        // private methods
+        private BsonValue EnsureUpdateIsValid(BsonValue update)
+        {
+            Ensure.IsNotNull(update, nameof(update));
+
+            switch (update)
+            {
+                case BsonDocument document:
+                {
+                    if (document.ElementCount == 0)
+                    {
+                        throw new ArgumentException("Updates must have at least 1 update operator.", nameof(update));
+                    }
+
+                    break;
+                }
+                case BsonArray array:
+                {
+                    if (array.Count == 0)
+                    {
+                        throw new ArgumentException("Updates must have at least 1 update operator in a pipeline.", nameof(update));
+                    }
+
+                    break;
+                }
+                default:
+                    throw new ArgumentException("Updates must be BsonDocument or BsonArray.", nameof(update));
+            }
+
+            return update;
         }
 
         private class Validator : IElementNameValidator

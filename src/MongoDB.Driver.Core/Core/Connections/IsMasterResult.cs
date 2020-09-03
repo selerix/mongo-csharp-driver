@@ -19,6 +19,7 @@ using System.Linq;
 using System.Net;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Clusters;
+using MongoDB.Driver.Core.Compression;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Servers;
 
@@ -44,6 +45,31 @@ namespace MongoDB.Driver.Core.Connections
 
         // properties
         /// <summary>
+        /// Gets the compressor types.
+        /// </summary>
+        public IReadOnlyList<CompressorType> Compressions
+        {
+            get
+            {
+                if (_wrapped.TryGetValue("compression", out var value))
+                {
+                    return value
+                        .AsBsonArray
+                        .Select(x =>
+                        {
+                            return Enum.TryParse<CompressorType>(x.AsString, true, out var compressorType)
+                                ? compressorType
+                                // we can have such a case only due to the server bug
+                                : throw new NotSupportedException($"The unsupported compressor name: '{x}'.");
+                        })
+                        .ToList();
+                }
+
+                return new CompressorType[0];
+            }
+        }
+
+        /// <summary>
         /// Gets the election identifier.
         /// </summary>
         public ElectionId ElectionId
@@ -58,6 +84,17 @@ namespace MongoDB.Driver.Core.Connections
 
                 return null;
             }
+        }
+        
+        /// <summary>
+        /// Get whether SaslSupportedMechs was part of the isMaster response.
+        /// </summary>
+        /// <value>
+        /// Whether SaslSupportedMechs was part of the isMaster response.
+        /// </value>
+        public bool HasSaslSupportedMechs
+        {
+            get { return _wrapped.Contains("saslSupportedMechs"); }   
         }
 
         /// <summary>
@@ -204,6 +241,18 @@ namespace MongoDB.Driver.Core.Connections
 
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Get the SaslSupportedMechs.
+        /// </summary>
+        /// <value>
+        /// The SaslSupportedMechs. Empty if saslSupportedMechs was an empty list or if saslSupportedMechs was not
+        /// included in the isMaster response.
+        /// </value>
+        public IEnumerable<string> SaslSupportedMechs
+        {
+            get { return _wrapped.GetValue("saslSupportedMechs", new BsonArray()).AsBsonArray.Select(s => s.ToString()); }
         }
 
         /// <summary>

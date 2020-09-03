@@ -23,6 +23,7 @@ using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Shared;
 
 namespace MongoDB.Driver.Core.Operations
 {
@@ -173,7 +174,7 @@ namespace MongoDB.Driver.Core.Operations
         public TimeSpan? MaxTime
         {
             get { return _maxTime; }
-            set { _maxTime = value; }
+            set { _maxTime = Ensure.IsNullOrInfiniteOrGreaterThanOrEqualToZero(value, nameof(value)); }
         }
 
         /// <summary>
@@ -256,7 +257,7 @@ namespace MongoDB.Driver.Core.Operations
                         { "collation", () => _collation.ToBsonDocument(), _collation != null }
                     }
                 },
-                { "maxTimeMS", () => _maxTime.Value.TotalMilliseconds, _maxTime.HasValue }
+                { "maxTimeMS", () => MaxTimeHelper.ToMaxTimeMS(_maxTime.Value), _maxTime.HasValue }
            };
         }
 
@@ -266,7 +267,10 @@ namespace MongoDB.Driver.Core.Operations
             var resultSerializer = _resultSerializer ?? BsonSerializer.LookupSerializer<TResult>();
             var resultArraySerializer = new ArraySerializer<TResult>(resultSerializer);
             var commandResultSerializer = new ElementDeserializer<TResult[]>("retval", resultArraySerializer);
-            return new ReadCommandOperation<TResult[]>(_collectionNamespace.DatabaseNamespace, command, commandResultSerializer, _messageEncoderSettings);
+            return new ReadCommandOperation<TResult[]>(_collectionNamespace.DatabaseNamespace, command, commandResultSerializer, _messageEncoderSettings)
+            {
+                RetryRequested = false
+            };
         }
     }
 }

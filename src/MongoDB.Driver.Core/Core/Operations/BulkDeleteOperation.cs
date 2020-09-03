@@ -15,7 +15,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 
@@ -35,18 +34,12 @@ namespace MongoDB.Driver.Core.Operations
         // methods
         protected override IRetryableWriteOperation<BsonDocument> CreateBatchOperation(Batch batch)
         {
-            Func<WriteConcern> writeConcernFunc = null;
-            if (!WriteConcern.IsServerDefault)
-            {
-                writeConcernFunc = () => GetBatchWriteConcern(batch);
-            }
-
             return new RetryableDeleteCommandOperation(CollectionNamespace, batch.Requests, MessageEncoderSettings)
             {
                 IsOrdered = IsOrdered,
                 MaxBatchCount = MaxBatchCount,
                 RetryRequested = RetryRequested,
-                WriteConcernFunc = writeConcernFunc
+                WriteConcern = WriteConcern
             };
         }
 
@@ -59,6 +52,11 @@ namespace MongoDB.Driver.Core.Operations
                 MaxBatchLength = MaxBatchLength,
                 WriteConcern = WriteConcern
             };
+        }
+
+        protected override bool RequestHasCollation(DeleteRequest request)
+        {
+            return request.Collation != null;
         }
     }
 }

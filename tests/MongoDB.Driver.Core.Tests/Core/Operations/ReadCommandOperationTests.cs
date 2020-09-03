@@ -53,23 +53,36 @@ namespace MongoDB.Driver.Core.Operations
             result.DatabaseNamespace.Should().BeSameAs(databaseNamespace);
             result.MessageEncoderSettings.Should().BeSameAs(messageEncoderSettings);
             result.ResultSerializer.Should().BeSameAs(resultSerializer);
+            result.RetryRequested.Should().BeFalse();
         }
 
         [Theory]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.Primary, false, false)]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.Primary, false, true)]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.Secondary, true, false)]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.Secondary, true, true)]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.SecondaryPreferred, true, false)]
-        [InlineData(ServerType.Standalone, ReadPreferenceMode.SecondaryPreferred, true, true)]
-        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.Primary, false, false)]
-        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.Primary, false, true)]
-        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.SecondaryPreferred, true, false)]
-        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.SecondaryPreferred, true, true)]
+        [ParameterAttributeData]
+        public void RetryRequested_get_and_set_should_work(
+            [Values(false, true)] bool value)
+        {
+            var subject = CreateSubject<BsonDocument>();
+
+            subject.RetryRequested = value;
+            var result = subject.RetryRequested;
+
+            result.Should().Be(value);
+        }
+
+        [Theory]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.Primary, false)]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.Primary, true)]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.Secondary, false)]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.Secondary, true)]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.SecondaryPreferred, false)]
+        [InlineData(ServerType.Standalone, ReadPreferenceMode.SecondaryPreferred, true)]
+        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.Primary, false)]
+        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.Primary, true)]
+        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.SecondaryPreferred, false)]
+        [InlineData(ServerType.ShardRouter, ReadPreferenceMode.SecondaryPreferred, true)]
         public void Execute_should_call_channel_Command_with_unwrapped_command_when_wrapping_is_not_necessary(
             ServerType serverType,
             ReadPreferenceMode readPreferenceMode,
-            bool slaveOk,
             bool async)
         {
             var subject = CreateSubject<BsonDocument>();
@@ -91,10 +104,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         null, // additionalOptions
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -110,10 +124,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         null, // additionalOptions
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -136,7 +151,6 @@ namespace MongoDB.Driver.Core.Operations
             var binding = CreateMockReadBinding(readPreference, channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
             var additionalOptions = BsonDocument.Parse("{ $comment : \"comment\", additional : 1 }");
-            var slaveOk = false;
 
             BsonDocument result;
             if (async)
@@ -149,10 +163,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -168,10 +183,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -193,7 +209,6 @@ namespace MongoDB.Driver.Core.Operations
             var binding = CreateMockReadBinding(readPreference, channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
             var additionalOptions = BsonDocument.Parse("{ $comment : \"comment\" }");
-            var slaveOk = false;
 
             BsonDocument result;
             if (async)
@@ -206,10 +221,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -225,10 +241,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -251,7 +268,6 @@ namespace MongoDB.Driver.Core.Operations
             var binding = CreateMockReadBinding(readPreference, channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
             var additionalOptions = BsonDocument.Parse("{ $comment : \"comment\", additional : 1 }");
-            var slaveOk = true;
 
             BsonDocument result;
             if (async)
@@ -264,10 +280,11 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -283,14 +300,39 @@ namespace MongoDB.Driver.Core.Operations
                         readPreference,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
                     Times.Once);
+            }
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void Execute_should_call_GetChannel_only_once([Values(false, true)] bool async)
+        {
+            var subject = CreateSubject<BsonDocument>();
+            var readPreference = ReadPreference.Primary;
+            var serverDescription = CreateServerDescription(ServerType.Standalone);
+            var mockChannel = CreateMockChannel();
+            var mockChannelSource = CreateMockChannelSource(serverDescription, mockChannel.Object);
+            var binding = CreateMockReadBinding(readPreference, mockChannelSource.Object).Object;
+            var cancellationToken = new CancellationTokenSource().Token;
+
+            if (async)
+            {
+                subject.ExecuteAsync(binding, cancellationToken).GetAwaiter().GetResult();
+                mockChannelSource.Verify(c => c.GetChannelAsync(cancellationToken), Times.Once);
+            }
+            else
+            {
+                subject.Execute(binding, cancellationToken);
+                mockChannelSource.Verify(c => c.GetChannel(cancellationToken), Times.Once);
             }
         }
 

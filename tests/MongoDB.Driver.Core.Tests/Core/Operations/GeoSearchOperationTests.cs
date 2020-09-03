@@ -23,6 +23,7 @@ using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using Xunit;
 
@@ -60,6 +61,34 @@ namespace MongoDB.Driver.Core.Operations
             Action act = () => new GeoSearchOperation<BsonDocument>(_collectionNamespace, 5, BsonDocumentSerializer.Instance, null);
 
             act.ShouldThrow<ArgumentNullException>();
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_get_and_set_should_work(
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
+        {
+            var subject = new GeoSearchOperation<BsonDocument>(_collectionNamespace, 5, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            subject.MaxTime = value;
+            var result = subject.MaxTime;
+
+            result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var subject = new GeoSearchOperation<BsonDocument>(_collectionNamespace, 5, BsonDocumentSerializer.Instance, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]
@@ -104,12 +133,42 @@ namespace MongoDB.Driver.Core.Operations
                     { "limit", limit },
                     { "maxDistance", maxDistance },
                     { "search", filter },
-                    { "maxTimeMS", maxTime.TotalMilliseconds },
+                    { "maxTimeMS", (int)maxTime.TotalMilliseconds },
                     { "readConcern", () => readConcern.ToBsonDocument(), !readConcern.IsServerDefault }
                 };
                 result.Should().Be(expectedResult);
-
+                result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
             }
+        }
+
+        [Theory]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
+        {
+            var near = 5;
+            var subject = new GeoSearchOperation<BsonDocument>(_collectionNamespace, near, BsonDocumentSerializer.Instance, _messageEncoderSettings)
+            {
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
+            };
+            var serverVersion = new SemanticVersion(3, 2, 0);
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion);
+            var session = OperationTestHelper.CreateSession();
+
+            var result = subject.CreateCommand(connectionDescription, session);
+
+            var expectedResult = new BsonDocument
+            {
+                { "geoSearch", _collectionNamespace.CollectionName },
+                { "near", near },
+                { "maxTimeMS", expectedMaxTimeMS }
+            };
+            result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [SkippableTheory]
@@ -155,6 +214,31 @@ namespace MongoDB.Driver.Core.Operations
             VerifySessionIdWasSentWhenSupported(subject, "geoSearch", async);
         }
 
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.FailPoints).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var subject = new GeoSearchOperation<BsonDocument>(
+                _collectionNamespace,
+                new BsonArray { 1, 2 },
+                BsonDocumentSerializer.Instance,
+                _messageEncoderSettings)
+            {
+                MaxDistance = 20,
+                Search = new BsonDocument("Type", "restaraunt")
+            };
+            subject.MaxTime = TimeSpan.FromSeconds(9001);
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
+        }
+        
         // helper methods
         private void EnsureTestData()
         {

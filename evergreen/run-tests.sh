@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -o xtrace   # Write all commands first to stderr
 set -o errexit  # Exit the script with error if any of the commands fail
@@ -14,6 +14,7 @@ AUTH=${AUTH:-noauth}
 SSL=${SSL:-nossl}
 MONGODB_URI=${MONGODB_URI:-}
 TOPOLOGY=${TOPOLOGY:-server}
+COMPRESSOR=${COMPRESSOR:-none}
 
 ############################################
 #            Functions                     #
@@ -21,22 +22,31 @@ TOPOLOGY=${TOPOLOGY:-server}
 
 provision_ssl () {
   echo "SSL !"
-
+  uri_environment_variable_name=$1
   # Arguments for auth + SSL
   if [ "$AUTH" != "noauth" ] || [ "$TOPOLOGY" == "replica_set" ]; then
-    export MONGODB_URI="${MONGODB_URI}&ssl=true&sslVerifyCertificate=false"
+    export $uri_environment_variable_name="${!uri_environment_variable_name}&ssl=true&sslVerifyCertificate=false"
   else
-    export MONGODB_URI="${MONGODB_URI}/?ssl=true&sslVerifyCertificate=false"
+    export $uri_environment_variable_name="${!uri_environment_variable_name}/?ssl=true&sslVerifyCertificate=false"
   fi
+}
+
+provision_compressor () {
+    uri_environment_variable_name=$1
+    if [[ "${!uri_environment_variable_name}" =~ "/?" ]]; then
+        export $uri_environment_variable_name="${!uri_environment_variable_name}&compressors=$COMPRESSOR"
+    else
+        export $uri_environment_variable_name="${!uri_environment_variable_name}/?compressors=$COMPRESSOR"
+    fi
 }
 
 ############################################
 #            Main Program                  #
 ############################################
-
+echo "Initial MongoDB URI:" $MONGODB_URI
 # Provision the correct connection string and set up SSL if needed
 if [ "$TOPOLOGY" == "sharded_cluster" ]; then
-
+       export MONGODB_URI_WITH_MULTIPLE_MONGOSES="${MONGODB_URI}"
      if [ "$AUTH" = "auth" ]; then
        export MONGODB_URI="mongodb://bob:pwd123@localhost:27017/?authSource=admin"
      else
@@ -45,16 +55,32 @@ if [ "$TOPOLOGY" == "sharded_cluster" ]; then
 fi
 
 if [ "$SSL" != "nossl" ]; then
-   provision_ssl
+   provision_ssl MONGODB_URI
+   if [ "$TOPOLOGY" == "sharded_cluster" ]; then
+     provision_ssl MONGODB_URI_WITH_MULTIPLE_MONGOSES  
+   fi
 fi
 
-echo "Running $AUTH tests over $SSL for $TOPOLOGY and connecting to $MONGODB_URI"
+if [ "$COMPRESSOR" != "none" ]; then
+    provision_compressor MONGODB_URI
+    if [ "$TOPOLOGY" == "sharded_cluster" ]; then
+        provision_compressor MONGODB_URI_WITH_MULTIPLE_MONGOSES
+    fi
+fi
+
+echo "Running $AUTH tests over $SSL for $TOPOLOGY with $COMPRESSOR compressor and connecting to $MONGODB_URI"
 
 if [ "$OS" == "windows-64" ]; then
-  export TARGET="TestWindows"
+  export TARGET="Test"
 else
-  export TARGET="TestLinux"
+  export TARGET="Test"
 fi
 
-for var in TMP TEMP NUGET_PACKAGES NUGET_HTTP_CACHE_PATH APPDATA; do setx $var z:\\data\\tmp; export $var=z:\\data\\tmp; done
+echo "Final MongoDB_URI: $MONGODB_URI"
+if [ "$TOPOLOGY" == "sharded_cluster" ]; then
+  echo "Final MongoDB URI with multiple mongoses: $MONGODB_URI_WITH_MULTIPLE_MONGOSES"
+fi
+for var in TMP TEMP NUGET_PACKAGES NUGET_HTTP_CACHE_PATH APPDATA; do 
+  export $var=z:\\data\\tmp; 
+done
 powershell.exe .\\build.ps1 -target ${TARGET}

@@ -29,11 +29,51 @@ namespace MongoDB.Driver
     public class ReadConcernTests
     {
         [Fact]
+        public void Available_should_return_expected_result()
+        {
+            var result = ReadConcern.Available;
+
+            result.Level.Should().Be(ReadConcernLevel.Available);
+        }
+
+        [Fact]
         public void Default_should_return_expected_result()
         {
             var result = ReadConcern.Default;
 
             result.Level.Should().BeNull();
+        }
+
+        [Fact]
+        public void Linearizable_should_return_expected_result()
+        {
+            var result = ReadConcern.Linearizable;
+
+            result.Level.Should().Be(ReadConcernLevel.Linearizable);
+        }
+
+        [Fact]
+        public void Local_should_return_expected_result()
+        {
+            var result = ReadConcern.Local;
+
+            result.Level.Should().Be(ReadConcernLevel.Local);
+        }
+
+        [Fact]
+        public void Majority_should_return_expected_result()
+        {
+            var result = ReadConcern.Majority;
+
+            result.Level.Should().Be(ReadConcernLevel.Majority);
+        }
+
+        [Fact]
+        public void Snapshot_should_return_expected_result()
+        {
+            var result = ReadConcern.Snapshot;
+
+            result.Level.Should().Be(ReadConcernLevel.Snapshot);
         }
 
         [Theory]
@@ -71,9 +111,11 @@ namespace MongoDB.Driver
         }
 
         [Theory]
+        [InlineData(ReadConcernLevel.Available, "{ level: 'available' }")]
         [InlineData(ReadConcernLevel.Linearizable, "{ level: 'linearizable' }")]
         [InlineData(ReadConcernLevel.Local, "{ level: 'local' }")]
         [InlineData(ReadConcernLevel.Majority, "{ level: 'majority' }")]
+        [InlineData(ReadConcernLevel.Snapshot, "{ level: 'snapshot' }")]
         [InlineData(null, "{ }")]
         public void ToBsonDocument_should_return_expected_result(ReadConcernLevel? level, string json)
         {

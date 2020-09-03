@@ -56,8 +56,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 { "dropDatabase", 1 }
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription();
 
-            var result = subject.CreateCommand(null);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             result.Should().Be(expectedResult);
         }
@@ -73,8 +75,10 @@ namespace MongoDB.Driver.Core.Operations
             {
                 WriteConcern = writeConcern
             };
+            var session = OperationTestHelper.CreateSession();
+            var connectionDescription = OperationTestHelper.CreateConnectionDescription(serverVersion: Feature.CommandsThatWriteAcceptWriteConcern.FirstSupportedVersion);
 
-            var result = subject.CreateCommand(Feature.CommandsThatWriteAcceptWriteConcern.FirstSupportedVersion);
+            var result = subject.CreateCommand(session, connectionDescription);
 
             var expectedResult = new BsonDocument
             {
@@ -93,7 +97,7 @@ namespace MongoDB.Driver.Core.Operations
             RequireServer.Check();
             EnsureDatabaseExists();
 
-            using (var binding = CoreTestConfiguration.GetReadWriteBinding(_session.Fork()))
+            using (var binding = CreateReadWriteBinding())
             {
                 var subject = new DropDatabaseOperation(_databaseNamespace, _messageEncoderSettings);
 
@@ -130,7 +134,7 @@ namespace MongoDB.Driver.Core.Operations
 
             var exception = Record.Exception(() =>
             {
-                using (var binding = CoreTestConfiguration.GetReadWriteBinding(_session.Fork()))
+                using (var binding = CreateReadWriteBinding())
                 {
                     ExecuteOperation(subject, binding, async);
                 }

@@ -423,7 +423,7 @@ namespace MongoDB.Driver
         /// <returns>An equality filter.</returns>
         public FilterDefinition<TDocument> Eq<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new SimpleFilterDefinition<TDocument, TField>(field, value);
+            return new SimpleFilterDefinition<TDocument, TField>(field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -661,7 +661,7 @@ namespace MongoDB.Driver
         /// <returns>A greater than filter.</returns>
         public FilterDefinition<TDocument> Gt<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new OperatorFilterDefinition<TDocument, TField>("$gt", field, value);
+            return new OperatorFilterDefinition<TDocument, TField>("$gt", field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -733,7 +733,7 @@ namespace MongoDB.Driver
         /// <returns>A greater than or equal filter.</returns>
         public FilterDefinition<TDocument> Gte<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new OperatorFilterDefinition<TDocument, TField>("$gte", field, value);
+            return new OperatorFilterDefinition<TDocument, TField>("$gte", field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -781,7 +781,7 @@ namespace MongoDB.Driver
         /// <returns>An in filter.</returns>
         public FilterDefinition<TDocument> In<TField>(FieldDefinition<TDocument, TField> field, IEnumerable<TField> values)
         {
-            return new SingleItemAsArrayOperatorFilterDefinition<TDocument, TField>("$in", field, values);
+            return new SingleItemAsArrayOperatorFilterDefinition<TDocument, TField>("$in", field, values, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -794,6 +794,16 @@ namespace MongoDB.Driver
         public FilterDefinition<TDocument> In<TField>(Expression<Func<TDocument, TField>> field, IEnumerable<TField> values)
         {
             return In(new ExpressionFieldDefinition<TDocument, TField>(field), values);
+        }
+
+        /// <summary>
+        /// Creates a json schema filter.
+        /// </summary>
+        /// <param name="schema">The json validation schema.</param>
+        /// <returns>A schema filter.</returns>
+        public FilterDefinition<TDocument> JsonSchema(BsonDocument schema)
+        {
+            return new BsonDocumentFilterDefinition<TDocument>(new BsonDocument("$jsonSchema", schema));
         }
 
         /// <summary>
@@ -829,7 +839,7 @@ namespace MongoDB.Driver
         /// <returns>A less than filter.</returns>
         public FilterDefinition<TDocument> Lt<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new OperatorFilterDefinition<TDocument, TField>("$lt", field, value);
+            return new OperatorFilterDefinition<TDocument, TField>("$lt", field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -901,7 +911,7 @@ namespace MongoDB.Driver
         /// <returns>A less than or equal filter.</returns>
         public FilterDefinition<TDocument> Lte<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new OperatorFilterDefinition<TDocument, TField>("$lte", field, value);
+            return new OperatorFilterDefinition<TDocument, TField>("$lte", field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -973,7 +983,7 @@ namespace MongoDB.Driver
         /// <returns>A not equal filter.</returns>
         public FilterDefinition<TDocument> Ne<TField>(FieldDefinition<TDocument, TField> field, TField value)
         {
-            return new OperatorFilterDefinition<TDocument, TField>("$ne", field, value);
+            return new OperatorFilterDefinition<TDocument, TField>("$ne", field, value, allowScalarValueForArrayField: true);
         }
 
         /// <summary>
@@ -1829,8 +1839,15 @@ namespace MongoDB.Driver
 
         private static BsonDocument NegateArbitraryFilter(BsonDocument filter)
         {
-            // $not only works as a meta operator on a single operator so simulate Not using $nor
-            return new BsonDocument("$nor", new BsonArray { filter });
+            if (filter.ElementCount == 1 && filter.GetElement(0).Name.StartsWith("$"))
+            {
+                return new BsonDocument("$not", filter);
+            }
+            else
+            {
+                // $not only works as a meta operator on a single operator so simulate Not using $nor
+                return new BsonDocument("$nor", new BsonArray { filter });
+            }
         }
 
         private static BsonDocument NegateSingleElementFilter(BsonDocument filter, BsonElement element)
@@ -1888,6 +1905,8 @@ namespace MongoDB.Driver
         {
             switch (element.Name)
             {
+                case "$and":
+                    return new BsonDocument("$nor", new BsonArray { filter });
                 case "$or":
                     return new BsonDocument("$nor", element.Value);
                 case "$nor":
@@ -2009,17 +2028,23 @@ namespace MongoDB.Driver
         private readonly string _operatorName;
         private readonly FieldDefinition<TDocument, TField> _field;
         private readonly TField _value;
+        private readonly bool _allowScalarValueForArrayField;
 
-        public OperatorFilterDefinition(string operatorName, FieldDefinition<TDocument, TField> field, TField value)
+        public OperatorFilterDefinition(
+            string operatorName,
+            FieldDefinition<TDocument, TField> field,
+            TField value,
+            bool allowScalarValueForArrayField = false)
         {
             _operatorName = Ensure.IsNotNull(operatorName, operatorName);
             _field = Ensure.IsNotNull(field, nameof(field));
             _value = value;
+            _allowScalarValueForArrayField = allowScalarValueForArrayField;
         }
 
         public override BsonDocument Render(IBsonSerializer<TDocument> documentSerializer, IBsonSerializerRegistry serializerRegistry)
         {
-            var renderedField = _field.Render(documentSerializer, serializerRegistry);
+            var renderedField = _field.Render(documentSerializer, serializerRegistry, _allowScalarValueForArrayField);
 
             var document = new BsonDocument();
             using (var bsonWriter = new BsonDocumentWriter(document))
@@ -2098,16 +2123,21 @@ namespace MongoDB.Driver
     {
         private readonly FieldDefinition<TDocument, TField> _field;
         private readonly TField _value;
+        private readonly bool _allowScalarValueForArrayField;
 
-        public SimpleFilterDefinition(FieldDefinition<TDocument, TField> field, TField value)
+        public SimpleFilterDefinition(
+            FieldDefinition<TDocument, TField> field,
+            TField value,
+            bool allowScalarValueForArrayField = false)
         {
             _field = Ensure.IsNotNull(field, nameof(field));
             _value = value;
+            _allowScalarValueForArrayField = allowScalarValueForArrayField;
         }
 
         public override BsonDocument Render(IBsonSerializer<TDocument> documentSerializer, IBsonSerializerRegistry serializerRegistry)
         {
-            var renderedField = _field.Render(documentSerializer, serializerRegistry);
+            var renderedField = _field.Render(documentSerializer, serializerRegistry, _allowScalarValueForArrayField);
 
             var document = new BsonDocument();
             using (var bsonWriter = new BsonDocumentWriter(document))
@@ -2128,17 +2158,23 @@ namespace MongoDB.Driver
         private readonly string _operatorName;
         private readonly FieldDefinition<TDocument, TField> _field;
         private readonly IEnumerable<TField> _values;
+        private readonly bool _allowScalarValueForArrayField;
 
-        public SingleItemAsArrayOperatorFilterDefinition(string operatorName, FieldDefinition<TDocument, TField> field, IEnumerable<TField> values)
+        public SingleItemAsArrayOperatorFilterDefinition(
+            string operatorName,
+            FieldDefinition<TDocument, TField> field,
+            IEnumerable<TField> values,
+            bool allowScalarValueForArrayField = false)
         {
             _operatorName = Ensure.IsNotNull(operatorName, operatorName);
             _field = Ensure.IsNotNull(field, nameof(field));
             _values = Ensure.IsNotNull(values, nameof(values));
+            _allowScalarValueForArrayField = allowScalarValueForArrayField;
         }
 
         public override BsonDocument Render(IBsonSerializer<TDocument> documentSerializer, IBsonSerializerRegistry serializerRegistry)
         {
-            var renderedField = _field.Render(documentSerializer, serializerRegistry);
+            var renderedField = _field.Render(documentSerializer, serializerRegistry, _allowScalarValueForArrayField);
 
             var document = new BsonDocument();
             using (var bsonWriter = new BsonDocumentWriter(document))

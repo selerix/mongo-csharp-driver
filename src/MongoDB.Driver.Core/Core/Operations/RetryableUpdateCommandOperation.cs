@@ -14,14 +14,17 @@
 */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
+using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Connections;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Operations.ElementNameValidators;
+using MongoDB.Driver.Core.WireProtocol.Messages;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 
 namespace MongoDB.Driver.Core.Operations
@@ -34,7 +37,6 @@ namespace MongoDB.Driver.Core.Operations
         // private fields
         private bool? _bypassDocumentValidation;
         private readonly CollectionNamespace _collectionNamespace;
-        private bool _isOrdered = true;
         private readonly BatchableSource<UpdateRequest> _updates;
 
         // constructors
@@ -77,16 +79,6 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         /// <summary>
-        /// Gets or sets a value indicating whether the server should process the inserts in order.
-        /// </summary>
-        /// <value>A value indicating whether the server should process the inserts in order.</value>
-        public bool IsOrdered
-        {
-            get { return _isOrdered; }
-            set { _isOrdered = value; }
-        }
-
-        /// <summary>
         /// Gets the updates.
         /// </summary>
         /// <value>
@@ -99,7 +91,7 @@ namespace MongoDB.Driver.Core.Operations
 
         // protected methods
         /// <inheritdoc />
-        protected override BsonDocument CreateCommand(ConnectionDescription connectionDescription, int attempt, long? transactionNumber)
+        protected override BsonDocument CreateCommand(ICoreSessionHandle session, ConnectionDescription connectionDescription, int attempt, long? transactionNumber)
         {
             var serverVersion = connectionDescription.ServerVersion;
             if (!Feature.Collation.IsSupported(serverVersion))
@@ -117,42 +109,33 @@ namespace MongoDB.Driver.Core.Operations
                 }
             }
 
-            var batchSerializer = CreateBatchSerializer(connectionDescription, attempt);
-            var batchWrapper = new BsonDocumentWrapper(_updates, batchSerializer);
-
-            BsonDocument writeConcernWrapper = null;
-            if (WriteConcernFunc != null)
-            {
-                var writeConcernSerializer = new DelayedEvaluationWriteConcernSerializer();
-                writeConcernWrapper = new BsonDocumentWrapper(WriteConcernFunc, writeConcernSerializer);
-            }
-
+            var writeConcern = WriteConcernHelper.GetWriteConcernForWriteCommand(session, WriteConcern);
             return new BsonDocument
             {
                 { "update", _collectionNamespace.CollectionName },
-                { "ordered", _isOrdered },
+                { "ordered", IsOrdered },
                 { "bypassDocumentValidation", () => _bypassDocumentValidation.Value, _bypassDocumentValidation.HasValue },
-                { "txnNumber", () => transactionNumber.Value, transactionNumber.HasValue },
-                { "updates", new BsonArray { batchWrapper } },
-                { "writeConcern", writeConcernWrapper, writeConcernWrapper != null }
+                { "writeConcern", writeConcern, writeConcern != null },
+                { "txnNumber", () => transactionNumber.Value, transactionNumber.HasValue }
             };
         }
 
-        // private methods
-        private IBsonSerializer<BatchableSource<UpdateRequest>> CreateBatchSerializer(ConnectionDescription connectionDescription, int attempt)
+        /// <inheritdoc />
+        protected override IEnumerable<Type1CommandMessageSection> CreateCommandPayloads(IChannelHandle channel, int attempt)
         {
+            BatchableSource<UpdateRequest> updates;
             if (attempt == 1)
             {
-                var maxBatchCount = Math.Min(MaxBatchCount ?? int.MaxValue, connectionDescription.MaxBatchCount);
-                var maxItemSize = connectionDescription.MaxWireDocumentSize;
-                var maxBatchSize = connectionDescription.MaxDocumentSize;
-                return new SizeLimitingBatchableSourceSerializer<UpdateRequest>(UpdateRequestSerializer.Instance, NoOpElementNameValidator.Instance, maxBatchCount, maxItemSize, maxBatchSize);
+                updates = _updates;
             }
             else
             {
-                var count = _updates.ProcessedCount; // as set by the first attempt
-                return new FixedCountBatchableSourceSerializer<UpdateRequest>(UpdateRequestSerializer.Instance, NoOpElementNameValidator.Instance, count);
+                updates = new BatchableSource<UpdateRequest>(_updates.Items, _updates.Offset, _updates.ProcessedCount, canBeSplit: false);
             }
+            var maxBatchCount = Math.Min(MaxBatchCount ?? int.MaxValue, channel.ConnectionDescription.MaxBatchCount);
+            var maxDocumentSize = channel.ConnectionDescription.MaxWireDocumentSize;
+            var payload = new Type1CommandMessageSection<UpdateRequest>("updates", _updates, UpdateRequestSerializer.Instance, NoOpElementNameValidator.Instance, maxBatchCount, maxDocumentSize);
+            return new Type1CommandMessageSection[] { payload };
         }
 
         // nested types
@@ -204,7 +187,7 @@ namespace MongoDB.Driver.Core.Operations
                 try
                 {
                     var position = writer.Position;
-                    BsonDocumentSerializer.Instance.Serialize(context, request.Update);
+                    BsonValueSerializer.Instance.Serialize(context, request.Update);
                     if (request.UpdateType == UpdateType.Update && writer.Position == position + 8)
                     {
                         throw new BsonSerializationException("Update documents cannot be empty.");

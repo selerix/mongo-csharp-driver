@@ -17,9 +17,7 @@ using System;
 using System.IO;
 using FluentAssertions;
 using MongoDB.Bson;
-using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization.Serializers;
-using MongoDB.Driver.Core.WireProtocol.Messages.Encoders.JsonEncoders;
 using Xunit;
 
 namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.JsonEncoders
@@ -92,6 +90,39 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.JsonEncoders
         {
             Action action = () => new JsonMessageEncoderFactory(null, null, __messageEncoderSettings);
             action.ShouldThrow<ArgumentException>();
+        }
+
+        [Fact]
+        public void GetCommandMessageEncoder_should_return_a_CommandMessageJsonEncoder()
+        {
+            using (var textWriter = new StringWriter())
+            {
+                var encoderFactory = new JsonMessageEncoderFactory(null, textWriter, __messageEncoderSettings);
+                var encoder = encoderFactory.GetCommandMessageEncoder();
+                encoder.Should().BeOfType<CommandMessageJsonEncoder>();
+            }
+        }
+
+        [Fact]
+        public void GetCommandRequestMessageEncoder_should_return_a_CommandRequestMessageJsonEncoder()
+        {
+            using (var textWriter = new StringWriter())
+            {
+                var encoderFactory = new JsonMessageEncoderFactory(null, textWriter, __messageEncoderSettings);
+                var encoder = encoderFactory.GetCommandRequestMessageEncoder();
+                encoder.Should().BeOfType<CommandRequestMessageJsonEncoder>();
+            }
+        }
+
+        [Fact]
+        public void GetCommandResponseMessageEncoder_should_return_a_CommandResponseMessageJsonEncoder()
+        {
+            using (var textWriter = new StringWriter())
+            {
+                var encoderFactory = new JsonMessageEncoderFactory(null, textWriter, __messageEncoderSettings);
+                var encoder = encoderFactory.GetCommandResponseMessageEncoder();
+                encoder.Should().BeOfType<CommandResponseMessageJsonEncoder>();
+            }
         }
 
         [Fact]
@@ -168,6 +199,17 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.JsonEncoders
                 var encoderFactory = new JsonMessageEncoderFactory(null, textWriter, __messageEncoderSettings);
                 var encoder = encoderFactory.GetUpdateMessageEncoder();
                 encoder.Should().BeOfType<UpdateMessageJsonEncoder>();
+            }
+        }
+
+        [Fact]
+        public void GetCompressedMessageEncoder_should_return_a_CompressedMessageJsonEncoder()
+        {
+            using (var textWriter = new StringWriter())
+            {
+                var encoderFactory = new JsonMessageEncoderFactory(null, textWriter, __messageEncoderSettings);
+                var encoder = encoderFactory.GetCompressedMessageEncoder(null);
+                encoder.Should().BeOfType<CompressedMessageJsonEncoder>();
             }
         }
     }

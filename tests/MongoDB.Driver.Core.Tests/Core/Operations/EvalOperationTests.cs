@@ -20,7 +20,9 @@ using FluentAssertions;
 using MongoDB.Bson;
 using MongoDB.Bson.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.Bindings;
+using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Misc;
+using MongoDB.Driver.Core.TestHelpers;
 using MongoDB.Driver.Core.TestHelpers.XunitExtensions;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 using Xunit;
@@ -115,21 +117,30 @@ namespace MongoDB.Driver.Core.Operations
             result.Should().Be(expectedResult);
         }
 
-        [Fact]
-        public void CreateCommand_should_return_expected_result_when_maxTime_is_provided()
+        [Theory]
+        [InlineData(-10000, 0)]
+        [InlineData(0, 0)]
+        [InlineData(1, 1)]
+        [InlineData(9999, 1)]
+        [InlineData(10000, 1)]
+        [InlineData(10001, 2)]
+        public void CreateCommand_should_return_expected_result_when_MaxTime_is_set(long maxTimeTicks, int expectedMaxTimeMS)
         {
             var function = new BsonJavaScript("return 1");
-            var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
-            subject.MaxTime = TimeSpan.FromSeconds(1);
+            var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings)
+            {
+                MaxTime = TimeSpan.FromTicks(maxTimeTicks)
+            };
             var expectedResult = new BsonDocument
             {
                 { "$eval", function },
-                { "maxTimeMS", 1000.0 }
+                { "maxTimeMS", expectedMaxTimeMS }
             };
 
             var result = subject.CreateCommand();
 
             result.Should().Be(expectedResult);
+            result["maxTimeMS"].BsonType.Should().Be(BsonType.Int32);
         }
 
         [Fact]
@@ -155,7 +166,7 @@ namespace MongoDB.Driver.Core.Operations
             [Values(false, true)]
             bool async)
         {
-            RequireServer.Check().Authentication(false);
+            RequireServer.Check().Supports(Feature.Eval).Authentication(false);
             var function = "return 1";
             var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
 
@@ -170,7 +181,7 @@ namespace MongoDB.Driver.Core.Operations
             [Values(false, true)]
             bool async)
         {
-            RequireServer.Check().Authentication(false);
+            RequireServer.Check().Supports(Feature.Eval).Authentication(false);
             var function = "function(x) { return x; }";
             var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
             subject.Args = new BsonValue[] { 1 };
@@ -198,7 +209,7 @@ namespace MongoDB.Driver.Core.Operations
             [Values(false, true)]
             bool async)
         {
-            RequireServer.Check().Authentication(false);
+            RequireServer.Check().Supports(Feature.Eval).Authentication(false);
             var function = "return 1";
             var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
             subject.NoLock = true;
@@ -222,19 +233,51 @@ namespace MongoDB.Driver.Core.Operations
             action.ShouldThrow<ArgumentNullException>();
         }
 
+        [SkippableTheory]
+        [ParameterAttributeData]
+        public void Execute_should_throw_when_maxTime_is_exceeded(
+            [Values(false, true)] bool async)
+        {
+            RequireServer.Check().Supports(Feature.Eval, Feature.FailPoints).Authentication(false).ClusterTypes(ClusterType.Standalone, ClusterType.ReplicaSet);
+            var function = "return 1";
+            var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings) { MaxTime = TimeSpan.FromSeconds(9001) };
+
+            using (var failPoint = FailPoint.ConfigureAlwaysOn(_cluster, _session, FailPointName.MaxTimeAlwaysTimeout))
+            {
+                var exception = Record.Exception(() => ExecuteOperation(subject, failPoint.Binding, async));
+
+                exception.Should().BeOfType<MongoExecutionTimeoutException>();
+            }
+        }
+
         [Theory]
         [ParameterAttributeData]
-        public void MaxTime_should_work(
-            [Values(null, 0, 1)]
-            int? value)
+        public void MaxTime_get_and_set_should_work(
+            [Values(-10000, 0, 1, 10000, 99999)] long maxTimeTicks)
         {
             var function = new BsonJavaScript("return 1");
             var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
-            var maxTime = value.HasValue ? (TimeSpan?)TimeSpan.FromSeconds(value.Value) : null;
+            var value = TimeSpan.FromTicks(maxTimeTicks);
 
-            subject.MaxTime = maxTime;
+            subject.MaxTime = value;
+            var result = subject.MaxTime;
 
-            subject.MaxTime.Should().Be(maxTime);
+            result.Should().Be(value);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void MaxTime_set_should_throw_when_value_is_invalid(
+            [Values(-10001, -9999, -1)] long maxTimeTicks)
+        {
+            var function = new BsonJavaScript("return 1");
+            var subject = new EvalOperation(_adminDatabaseNamespace, function, _messageEncoderSettings);
+            var value = TimeSpan.FromTicks(maxTimeTicks);
+
+            var exception = Record.Exception(() => subject.MaxTime = value);
+
+            var e = exception.Should().BeOfType<ArgumentOutOfRangeException>().Subject;
+            e.ParamName.Should().Be("value");
         }
 
         [Theory]
@@ -254,7 +297,7 @@ namespace MongoDB.Driver.Core.Operations
         // private methods
         private BsonValue ExecuteOperation(EvalOperation operation, bool async)
         {
-            using (var binding = CoreTestConfiguration.GetReadWriteBinding(_session.Fork()))
+            using (var binding = CreateReadWriteBinding())
             {
                 return ExecuteOperation(operation, binding, async);
             }

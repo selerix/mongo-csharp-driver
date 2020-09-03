@@ -13,11 +13,6 @@
 * limitations under the License.
 */
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using MongoDB.Bson.Serialization;
 
 namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
@@ -27,6 +22,31 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders
     /// </summary>
     public interface IMessageEncoderFactory
     {
+        /// <summary>
+        /// Gets an encoder for a Command message.
+        /// </summary>
+        /// <returns>An encoder.</returns>
+        IMessageEncoder GetCommandMessageEncoder();
+
+        /// <summary>
+        /// Gets an encoder for a Command request message.
+        /// </summary>
+        /// <returns>An encoder.</returns>
+        IMessageEncoder GetCommandRequestMessageEncoder();
+
+        /// <summary>
+        /// Gets an encoder for a Command response message.
+        /// </summary>
+        /// <returns>An encoder.</returns>
+        IMessageEncoder GetCommandResponseMessageEncoder();
+
+        /// <summary>
+        /// Gets an encoder for a Compressed message.
+        /// </summary>
+        /// <returns>An encoder.</returns>
+        /// <param name="originalEncoderSelector">The original encoder selector.</param>
+        IMessageEncoder GetCompressedMessageEncoder(IMessageEncoderSelector originalEncoderSelector);
+
         /// <summary>
         /// Gets an encoder for a Delete message.
         /// </summary>

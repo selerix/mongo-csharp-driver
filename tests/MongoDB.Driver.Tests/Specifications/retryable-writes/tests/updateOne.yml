@@ -1,13 +1,17 @@
+runOn:
+    -
+        minServerVersion: "3.6"
+        topology: ["replicaset"]
+
 data:
     - { _id: 1, x: 11 }
     - { _id: 2, x: 22 }
-
-minServerVersion: '3.6'
 
 tests:
     -
         description: "UpdateOne is committed on first attempt"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
         operation:
             name: "updateOne"
@@ -26,6 +30,7 @@ tests:
     -
         description: "UpdateOne is not committed on first attempt"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -45,6 +50,7 @@ tests:
     -
         description: "UpdateOne is never committed"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 2 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -61,6 +67,7 @@ tests:
     -
         description: "UpdateOne with upsert is committed on first attempt"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
         operation:
             name: "updateOne"
@@ -82,6 +89,7 @@ tests:
     -
         description: "UpdateOne with upsert is not committed on first attempt"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 1 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:
@@ -104,6 +112,7 @@ tests:
     -
         description: "UpdateOne with upsert is never committed"
         failPoint:
+            configureFailPoint: onPrimaryTransactionalWrite
             mode: { times: 2 }
             data: { failBeforeCommitExceptionCode: 1 }
         operation:

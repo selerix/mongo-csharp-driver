@@ -121,6 +121,99 @@ namespace MongoDB.Driver.Tests
 
         [Theory]
         [ParameterAttributeData]
+        public void ListDatabaseNames_should_invoke_the_correct_operation(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            var operationExecutor = new MockOperationExecutor();
+            var subject = new MongoClient(operationExecutor, DriverTestConfiguration.GetClientSettings());
+            var session = CreateClientSession();
+            var cancellationToken = new CancellationTokenSource().Token;
+            var listDatabaseNamesResult = @"
+            {
+            	""databases"" : [
+            		{
+            			""name"" : ""admin"",
+            			""sizeOnDisk"" : 131072,
+            			""empty"" : false
+            		},
+            		{
+            			""name"" : ""blog"",
+            			""sizeOnDisk"" : 11669504,
+            			""empty"" : false
+            		},
+            		{
+            			""name"" : ""test-chambers"",
+            			""sizeOnDisk"" : 222883840,
+            			""empty"" : false
+            		},
+            		{
+            			""name"" : ""recipes"",
+            			""sizeOnDisk"" : 73728,
+            			""empty"" : false
+            		},
+            		{
+            			""name"" : ""employees"",
+            			""sizeOnDisk"" : 225280,
+            			""empty"" : false
+            		}
+            	],
+            	""totalSize"" : 252534784,
+            	""ok"" : 1
+            }";
+            var operationResult = BsonDocument.Parse(listDatabaseNamesResult);
+            operationExecutor.EnqueueResult(CreateListDatabasesOperationCursor(operationResult));
+
+            IList<string> databaseNames;
+            if (async)
+            {
+                if (usingSession)
+                {
+                    databaseNames = subject.ListDatabaseNamesAsync(session, cancellationToken).GetAwaiter().GetResult().ToList();
+                }
+                else
+                {
+                    databaseNames = subject.ListDatabaseNamesAsync(cancellationToken).GetAwaiter().GetResult().ToList();
+                }
+            }
+            else
+            {
+                if (usingSession)
+                {
+                    databaseNames = subject.ListDatabaseNames(session, cancellationToken).ToList();
+                }
+                else
+                {
+                    databaseNames = subject.ListDatabaseNames(cancellationToken).ToList();
+                }
+            }
+
+            var call = operationExecutor.GetReadCall<IAsyncCursor<BsonDocument>>();
+
+            if (usingSession)
+            {
+                call.SessionId.Should().BeSameAs(session.ServerSession.Id);
+            }
+            else
+            {
+                call.UsedImplicitSession.Should().BeTrue();
+            }
+
+            call.CancellationToken.Should().Be(cancellationToken);
+
+            var operation = call.Operation.Should().BeOfType<ListDatabasesOperation>().Subject;
+            operation.NameOnly.Should().Be(true);
+            databaseNames.Should().Equal(operationResult["databases"].AsBsonArray.Select(record => record["name"].AsString));
+        }
+
+        private IAsyncCursor<BsonDocument> CreateListDatabasesOperationCursor(BsonDocument reply)
+        {
+            var databases = reply["databases"].AsBsonArray.OfType<BsonDocument>();
+            return new SingleBatchAsyncCursor<BsonDocument>(databases.ToList());
+        }
+
+        [Theory]
+        [ParameterAttributeData]
         public void ListDatabases_should_invoke_the_correct_operation(
             [Values(false, true)] bool usingSession,
             [Values(false, true)] bool async)
@@ -129,27 +222,35 @@ namespace MongoDB.Driver.Tests
             var subject = new MongoClient(operationExecutor, DriverTestConfiguration.GetClientSettings());
             var session = CreateClientSession();
             var cancellationToken = new CancellationTokenSource().Token;
+            var filterDocument = BsonDocument.Parse("{ name : \"awesome\" }");
+            var filterDefinition = (FilterDefinition<BsonDocument>)filterDocument;
+            var nameOnly = true;
+            var options = new ListDatabasesOptions
+            {
+                Filter = filterDefinition,
+                NameOnly = nameOnly
+            };
 
             if (usingSession)
             {
                 if (async)
                 {
-                    subject.ListDatabasesAsync(session, cancellationToken).GetAwaiter().GetResult();
+                    subject.ListDatabasesAsync(session, options, cancellationToken).GetAwaiter().GetResult();
                 }
                 else
                 {
-                    subject.ListDatabases(session, cancellationToken);
+                    subject.ListDatabases(session, options, cancellationToken);
                 }
             }
             else
             {
                 if (async)
                 {
-                    subject.ListDatabasesAsync(cancellationToken).GetAwaiter().GetResult();
+                    subject.ListDatabasesAsync(options, cancellationToken).GetAwaiter().GetResult();
                 }
                 else
                 {
-                    subject.ListDatabases(cancellationToken);
+                    subject.ListDatabases(options, cancellationToken);
                 }
             }
 
@@ -164,7 +265,83 @@ namespace MongoDB.Driver.Tests
             }
             call.CancellationToken.Should().Be(cancellationToken);
 
-            call.Operation.Should().BeOfType<ListDatabasesOperation>();
+            var operation = call.Operation.Should().BeOfType<ListDatabasesOperation>().Subject;
+            operation.Filter.Should().Be(filterDocument);
+            operation.NameOnly.Should().Be(nameOnly);
+        }
+
+        [Theory]
+        [ParameterAttributeData]
+        public void Watch_should_invoke_the_correct_operation(
+            [Values(false, true)] bool usingSession,
+            [Values(false, true)] bool async)
+        {
+            var operationExecutor = new MockOperationExecutor();
+            var clientSettings = DriverTestConfiguration.GetClientSettings();
+            var subject = new MongoClient(operationExecutor, clientSettings);
+            var session = usingSession ? CreateClientSession() : null;
+            var pipeline = new EmptyPipelineDefinition<ChangeStreamDocument<BsonDocument>>().Limit(1);
+            var options = new ChangeStreamOptions
+            {
+                BatchSize = 123,
+                Collation = new Collation("en-us"),
+                FullDocument = ChangeStreamFullDocumentOption.UpdateLookup,
+                MaxAwaitTime = TimeSpan.FromSeconds(123),
+                ResumeAfter = new BsonDocument(),
+                StartAfter = new BsonDocument(),
+                StartAtOperationTime = new BsonTimestamp(1, 2)
+            };
+            var cancellationToken = new CancellationTokenSource().Token;
+            var renderedPipeline = new[] { BsonDocument.Parse("{ $limit : 1 }") };
+
+            if (usingSession)
+            {
+                if (async)
+                {
+                    subject.WatchAsync(session, pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    subject.Watch(session, pipeline, options, cancellationToken);
+                }
+            }
+            else
+            {
+                if (async)
+                {
+                    subject.WatchAsync(pipeline, options, cancellationToken).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    subject.Watch(pipeline, options, cancellationToken);
+                }
+            }
+
+            var call = operationExecutor.GetReadCall<IChangeStreamCursor<ChangeStreamDocument<BsonDocument>>>();
+            if (usingSession)
+            {
+                call.SessionId.Should().BeSameAs(session.ServerSession.Id);
+            }
+            else
+            {
+                call.UsedImplicitSession.Should().BeTrue();
+            }
+            call.CancellationToken.Should().Be(cancellationToken);
+
+            var changeStreamOperation = call.Operation.Should().BeOfType<ChangeStreamOperation<ChangeStreamDocument<BsonDocument>>>().Subject;
+            changeStreamOperation.BatchSize.Should().Be(options.BatchSize);
+            changeStreamOperation.Collation.Should().BeSameAs(options.Collation);
+            changeStreamOperation.CollectionNamespace.Should().BeNull();
+            changeStreamOperation.DatabaseNamespace.Should().BeNull();
+            changeStreamOperation.FullDocument.Should().Be(options.FullDocument);
+            changeStreamOperation.MaxAwaitTime.Should().Be(options.MaxAwaitTime);
+            changeStreamOperation.MessageEncoderSettings.Should().NotBeNull();
+            changeStreamOperation.Pipeline.Should().Equal(renderedPipeline);
+            changeStreamOperation.ReadConcern.Should().Be(clientSettings.ReadConcern);
+            changeStreamOperation.ResultSerializer.Should().BeOfType<ChangeStreamDocumentSerializer<BsonDocument>>();
+            changeStreamOperation.ResumeAfter.Should().Be(options.ResumeAfter);
+            changeStreamOperation.StartAfter.Should().Be(options.StartAfter);
+            changeStreamOperation.StartAtOperationTime.Should().Be(options.StartAtOperationTime);
         }
 
         [Fact]
@@ -243,10 +420,77 @@ namespace MongoDB.Driver.Tests
         {
             var client = new Mock<IMongoClient>().Object;
             var options = new ClientSessionOptions();
-            var serverSession = new ServerSession();
-            var clientSession = new ClientSession(client, options, serverSession, isImplicit: false);
-            return new ClientSessionHandle(clientSession);
+            var cluster = Mock.Of<ICluster>();
+            var coreServerSession = new CoreServerSession();
+            var coreSession = new CoreSession(cluster, coreServerSession, options.ToCore());
+            var coreSessionHandle = new CoreSessionHandle(coreSession);
+            return new ClientSessionHandle(client, options, coreSessionHandle);
         }
+    }
+
+    public class AreSessionsSupportedServerSelectorTests
+    {
+        [Theory]
+        [InlineData("{ clusterType : 'Standalone', servers : [ { state : 'Disconnected', type : 'Unknown' } ]}")]
+        public void SelectServers_should_set_ClusterDescription(string clusterDescriptionJson)
+        {
+            var subject = CreateSubject();
+            var cluster = ClusterDescriptionParser.Parse(clusterDescriptionJson);
+            var connectedServers = cluster.Servers.Where(s => s.State == ServerState.Connected);
+
+            var result = subject.SelectServers(cluster, connectedServers);
+
+            AreSessionsSupportedServerSelectorReflector.ClusterDescription(subject).Should().BeSameAs(cluster);
+        }
+
+        [Theory]
+        [InlineData("{ connectionMode : 'Direct', clusterType : 'ReplicaSet', servers : [ { state : 'Connected', type : 'ReplicaSetArbiter' } ]}")]
+        public void SelectServers_should_return_all_servers_when_connection_mode_is_direct(string clusterDescriptionJson)
+        {
+            var subject = CreateSubject();
+            var cluster = ClusterDescriptionParser.Parse(clusterDescriptionJson);
+            var connectedServers = cluster.Servers.Where(s => s.State == ServerState.Connected).ToList();
+
+            var result = subject.SelectServers(cluster, connectedServers);
+
+            result.Should().Equal(connectedServers);
+        }
+
+        [Theory]
+        [InlineData("{ clusterType : 'ReplicaSet', servers : [ { state : 'Connected', type : 'ReplicaSetArbiter' }, { state : 'Connected', type : 'ReplicaSetPrimary' } ]}")]
+        public void SelectServers_should_return_data_bearing_servers_when_connection_mode_is__not_direct(string clusterDescriptionJson)
+        {
+            var subject = CreateSubject();
+            var cluster = ClusterDescriptionParser.Parse(clusterDescriptionJson);
+            var connectedServers = cluster.Servers.Where(s => s.State == ServerState.Connected).ToList();
+            var dataBearingServers = connectedServers.Skip(1).Take(1);
+
+            var result = subject.SelectServers(cluster, connectedServers);
+
+            result.Should().Equal(dataBearingServers);
+        }
+
+        // private methods
+        private IServerSelector CreateSubject()
+        {
+            return AreSessionsSupportedServerSelectorReflector.CreateInstance();
+        }
+    }
+
+    public static class MongoClientReflector
+    {
+        public static bool? AreSessionsSupported(this MongoClient obj, ClusterDescription clusterDescription) => (bool?)Reflector.Invoke(obj, nameof(AreSessionsSupported), clusterDescription);
+    }
+
+    public static class AreSessionsSupportedServerSelectorReflector
+    {
+        public static IServerSelector CreateInstance()
+        {
+            var type = typeof(MongoClient).GetTypeInfo().Assembly.GetType("MongoDB.Driver.MongoClient+AreSessionsSupportedServerSelector");
+            return (IServerSelector)Activator.CreateInstance(type);
+        }
+
+        public static ClusterDescription ClusterDescription(IServerSelector obj) => (ClusterDescription)Reflector.GetFieldValue(obj, nameof(ClusterDescription), BindingFlags.Public | BindingFlags.Instance);
     }
 
     public class AreSessionsSupportedServerSelectorTests

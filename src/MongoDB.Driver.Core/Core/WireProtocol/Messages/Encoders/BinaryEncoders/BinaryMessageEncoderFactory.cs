@@ -14,8 +14,8 @@
 */
 
 using System.IO;
-using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
+using MongoDB.Driver.Core.Compression;
 using MongoDB.Driver.Core.Misc;
 
 namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.BinaryEncoders
@@ -26,6 +26,7 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.BinaryEncoders
     public class BinaryMessageEncoderFactory : IMessageEncoderFactory
     {
         // fields
+        private readonly ICompressorSource _compressorSource;
         private readonly MessageEncoderSettings _encoderSettings;
         private readonly Stream _stream;
 
@@ -35,13 +36,44 @@ namespace MongoDB.Driver.Core.WireProtocol.Messages.Encoders.BinaryEncoders
         /// </summary>
         /// <param name="stream">The stream.</param>
         /// <param name="encoderSettings">The encoder settings.</param>
-        public BinaryMessageEncoderFactory(Stream stream, MessageEncoderSettings encoderSettings)
+        /// <param name="compressorSource">The compressor source.</param>
+        public BinaryMessageEncoderFactory(
+            Stream stream,
+            MessageEncoderSettings encoderSettings,
+            ICompressorSource compressorSource = null)
         {
+            _compressorSource = compressorSource;
             _stream = Ensure.IsNotNull(stream, nameof(stream));
             _encoderSettings = encoderSettings; // can be null
         }
 
         // methods
+        /// <inheritdoc/>
+        public IMessageEncoder GetCommandMessageEncoder()
+        {
+            return new CommandMessageBinaryEncoder(_stream, _encoderSettings);
+        }
+
+        /// <inheritdoc/>
+        public IMessageEncoder GetCommandRequestMessageEncoder()
+        {
+            var wrappedEncoder = (CommandMessageBinaryEncoder)GetCommandMessageEncoder();
+            return new CommandRequestMessageBinaryEncoder(wrappedEncoder);
+        }
+
+        /// <inheritdoc/>
+        public IMessageEncoder GetCommandResponseMessageEncoder()
+        {
+            var wrappedEncoder = (CommandMessageBinaryEncoder)GetCommandMessageEncoder();
+            return new CommandResponseMessageBinaryEncoder(wrappedEncoder);
+        }
+
+        /// <inheritdoc />
+        public IMessageEncoder GetCompressedMessageEncoder(IMessageEncoderSelector originalEncoderSelector)
+        {
+            return new CompressedMessageBinaryEncoder(_stream, originalEncoderSelector, _compressorSource, _encoderSettings);
+        }
+
         /// <inheritdoc/>
         public IMessageEncoder GetDeleteMessageEncoder()
         {

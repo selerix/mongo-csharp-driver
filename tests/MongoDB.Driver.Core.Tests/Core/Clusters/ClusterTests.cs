@@ -17,19 +17,21 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using MongoDB.Driver.Core.Clusters;
+using MongoDB.Bson.TestHelpers;
+using MongoDB.Bson.TestHelpers.XunitExtensions;
+using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters.ServerSelectors;
 using MongoDB.Driver.Core.Configuration;
 using MongoDB.Driver.Core.Events;
+using MongoDB.Driver.Core.Helpers;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Servers;
-using MongoDB.Driver.Core.Helpers;
 using Moq;
 using Xunit;
-using MongoDB.Bson.TestHelpers.XunitExtensions;
 
 namespace MongoDB.Driver.Core.Clusters
 {
@@ -59,7 +61,7 @@ namespace MongoDB.Driver.Core.Clusters
         {
             var result = Cluster.SupportedWireVersionRange;
 
-            result.Should().Be(new Range<int>(2, 6));
+            result.Should().Be(new Range<int>(2, 8));
         }
 
         [Fact]
@@ -100,6 +102,22 @@ namespace MongoDB.Driver.Core.Clusters
             description.Servers.Should().BeEmpty();
             description.State.Should().Be(ClusterState.Disconnected);
             description.Type.Should().Be(ClusterType.Unknown);
+        }
+
+        [Fact]
+        public void AcquireServerSession_should_call_serverSessionPool_AcquireSession()
+        {
+            var subject = CreateSubject();
+            var mockServerSessionPool = new Mock<ICoreServerSessionPool>();
+            var serverSessionPoolInfo = typeof(Cluster).GetField("_serverSessionPool", BindingFlags.NonPublic | BindingFlags.Instance);
+            serverSessionPoolInfo.SetValue(subject, mockServerSessionPool.Object);
+            var expectedResult = new Mock<ICoreServerSession>().Object;
+            mockServerSessionPool.Setup(m => m.AcquireSession()).Returns(expectedResult);
+
+            var result = subject.AcquireServerSession();
+
+            result.Should().BeSameAs(expectedResult);
+            mockServerSessionPool.Verify(m => m.AcquireSession(), Times.Once);
         }
 
         [Theory]
@@ -385,6 +403,18 @@ namespace MongoDB.Driver.Core.Clusters
         }
 
         [Fact]
+        public void StartSession_should_return_expected_result()
+        {
+            var subject = CreateSubject();
+            var options = new CoreSessionOptions();
+
+            var result = subject.StartSession(options);
+
+            result.Options.Should().BeSameAs(options);
+            result.ServerSession.Should().NotBeNull();
+        }
+
+        [Fact]
         public void DescriptionChanged_should_be_raised_when_the_description_changes()
         {
             int count = 0;
@@ -512,5 +542,10 @@ namespace MongoDB.Driver.Core.Clusters
                 }
             }
         }
+    }
+
+    internal static class ClusterReflector
+    {
+        public static InterlockedInt32 _state(this Cluster cluster) => (InterlockedInt32)Reflector.GetFieldValue(cluster, nameof(_state));
     }
 }

@@ -13,6 +13,9 @@
 * limitations under the License.
 */
 
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using MongoDB.Bson;
 
 namespace MongoDB.Driver.Core.Bindings
@@ -52,16 +55,49 @@ namespace MongoDB.Driver.Core.Bindings
         public BsonDocument ClusterTime => null;
 
         /// <inheritdoc />
+        public CoreTransaction CurrentTransaction => null;
+
+        /// <inheritdoc />
         public BsonDocument Id => null;
 
         /// <inheritdoc />
         public bool IsCausallyConsistent => false;
 
         /// <inheritdoc />
+        public bool IsDirty => false;
+
+        /// <inheritdoc />
         public bool IsImplicit => true;
 
         /// <inheritdoc />
+        public bool IsInTransaction => false;
+
+        /// <inheritdoc />
         public BsonTimestamp OperationTime => null;
+
+        /// <inheritdoc />
+        public CoreSessionOptions Options => null;
+
+        /// <inheritdoc />
+        public ICoreServerSession ServerSession => NoCoreServerSession.Instance;
+
+        // public methods
+        /// <inheritdoc />
+        public void AbortTransaction(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            throw new NotSupportedException("NoCoreSession does not support AbortTransaction.");
+        }
+
+        /// <inheritdoc />
+        public Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            throw new NotSupportedException("NoCoreSession does not support AbortTransactionAsync.");
+        }
+
+        /// <inheritdoc />
+        public void AboutToSendCommand()
+        {
+        }
 
         /// <inheritdoc />
         public void AdvanceClusterTime(BsonDocument newClusterTime)
@@ -80,8 +116,31 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public void CommitTransaction(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            throw new NotSupportedException("NoCoreSession does not support CommitTransaction.");
+        }
+
+        /// <inheritdoc />
+        public Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            throw new NotSupportedException("NoCoreSession does not support CommitTransactionAsync.");
+        }
+
+        /// <inheritdoc />
         public void Dispose()
         {
+        }
+
+        /// <inheritdoc />
+        public void MarkDirty()
+        {
+        }
+
+        /// <inheritdoc />
+        public void StartTransaction(TransactionOptions transactionOptions = null)
+        {
+            throw new NotSupportedException("NoCoreSession does not support StartTransaction.");
         }
 
         /// <inheritdoc />

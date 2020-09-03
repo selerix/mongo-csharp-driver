@@ -20,6 +20,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Clusters;
 using MongoDB.Driver.Core.Clusters.ServerSelectors;
@@ -27,6 +29,7 @@ using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Core.Operations;
 using MongoDB.Driver.Core.Servers;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
+using MongoDB.Driver.Encryption;
 
 namespace MongoDB.Driver
 {
@@ -51,8 +54,8 @@ namespace MongoDB.Driver
 
         // private fields
         private readonly ICluster _cluster;
+        private readonly AutoEncryptionLibMongoCryptController _libMongoCryptController;
         private readonly IOperationExecutor _operationExecutor;
-        private readonly IServerSessionPool _serverSessionPool;
         private readonly MongoClientSettings _settings;
 
         // constructors
@@ -66,6 +69,10 @@ namespace MongoDB.Driver
 
         /// <summary>
         /// Initializes a new instance of the MongoClient class.
+        /// In .NET Standard, authenticating via SCRAM-SHA-256 may not work with non-ASCII passwords because SaslPrep is
+        /// not fully implemented due to the lack of a string normalization function in .NET Standard 1.5.
+        /// Normalizing the password into Unicode Normalization Form KC beforehand MAY help.
+        /// SCRAM-SHA-1 is the recommended alternative for now.
         /// </summary>
         /// <param name="settings">The settings.</param>
         public MongoClient(MongoClientSettings settings)
@@ -73,11 +80,21 @@ namespace MongoDB.Driver
             _settings = Ensure.IsNotNull(settings, nameof(settings)).FrozenCopy();
             _cluster = ClusterRegistry.Instance.GetOrCreateCluster(_settings.ToClusterKey());
             _operationExecutor = new OperationExecutor(this);
-            _serverSessionPool = new ServerSessionPool(this);
+            if (settings.AutoEncryptionOptions != null)
+            {
+                _libMongoCryptController = new AutoEncryptionLibMongoCryptController(
+                    this, 
+                    _cluster.CryptClient,
+                    settings.AutoEncryptionOptions);
+            }
         }
 
         /// <summary>
         /// Initializes a new instance of the MongoClient class.
+        /// In .NET Standard, authenticating via SCRAM-SHA-256 may not work with non-ASCII passwords because SaslPrep is
+        /// not fully implemented due to the lack of a string normalization function in .NET Standard 1.5.
+        /// Normalizing the password into Unicode Normalization Form KC beforehand MAY help.
+        /// SCRAM-SHA-1 is the recommended alternative for now.
         /// </summary>
         /// <param name="url">The URL.</param>
         public MongoClient(MongoUrl url)
@@ -87,10 +104,14 @@ namespace MongoDB.Driver
 
         /// <summary>
         /// Initializes a new instance of the MongoClient class.
+        /// In .NET Standard, authenticating via SCRAM-SHA-256 may not work with non-ASCII passwords because SaslPrep is
+        /// not fully implemented due to the lack of a string normalization function in .NET Standard 1.5.
+        /// Normalizing the password into Unicode Normalization Form KC beforehand MAY help.
+        /// SCRAM-SHA-1 is the recommended alternative for now.
         /// </summary>
         /// <param name="connectionString">The connection string.</param>
         public MongoClient(string connectionString)
-            : this(ParseConnectionString(connectionString))
+            : this(MongoClientSettings.FromConnectionString(connectionString))
         {
         }
 
@@ -116,14 +137,25 @@ namespace MongoDB.Driver
         }
 
         // internal properties
+        internal AutoEncryptionLibMongoCryptController LibMongoCryptController => _libMongoCryptController;
         internal IOperationExecutor OperationExecutor => _operationExecutor;
+        
+        // internal methods
+        internal void ConfigureAutoEncryptionMessageEncoderSettings(MessageEncoderSettings messageEncoderSettings)
+        {
+            var autoEncryptionOptions = _settings.AutoEncryptionOptions;
+            if (autoEncryptionOptions != null)
+            {
+                if (!autoEncryptionOptions.BypassAutoEncryption)
+                {
+                    messageEncoderSettings.Add(MessageEncoderSettingsName.BinaryDocumentFieldEncryptor, _libMongoCryptController);
+                }
+                messageEncoderSettings.Add(MessageEncoderSettingsName.BinaryDocumentFieldDecryptor, _libMongoCryptController);
+            }
+        }
 
         // private static methods
-        private static MongoClientSettings ParseConnectionString(string connectionString)
-        {
-            var url = new MongoUrl(connectionString);
-            return MongoClientSettings.FromUrl(url);
-        }
+
 
         // public methods
         /// <inheritdoc/>
@@ -174,33 +206,109 @@ namespace MongoDB.Driver
             return new MongoDatabaseImpl(this, new DatabaseNamespace(name), settings, _cluster, _operationExecutor);
         }
 
+        /// <inheritdoc />
+        public sealed override IAsyncCursor<string> ListDatabaseNames(
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSession(session => ListDatabaseNames(session, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public sealed override IAsyncCursor<string> ListDatabaseNames(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            var options = new ListDatabasesOptions { NameOnly = true };
+            var databases = ListDatabases(session, options, cancellationToken);
+            return CreateDatabaseNamesCursor(databases);
+        }
+
+        /// <inheritdoc />
+        public sealed override Task<IAsyncCursor<string>> ListDatabaseNamesAsync(
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSessionAsync(session => ListDatabaseNamesAsync(session, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public sealed override async Task<IAsyncCursor<string>> ListDatabaseNamesAsync(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            var options = new ListDatabasesOptions { NameOnly = true };
+            var databases = await ListDatabasesAsync(session, options, cancellationToken).ConfigureAwait(false);
+            return CreateDatabaseNamesCursor(databases);
+        }
+
         /// <inheritdoc/>
-        public sealed override IAsyncCursor<BsonDocument> ListDatabases(CancellationToken cancellationToken = default(CancellationToken))
+        public sealed override IAsyncCursor<BsonDocument> ListDatabases(
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             return UsingImplicitSession(session => ListDatabases(session, cancellationToken), cancellationToken);
         }
 
         /// <inheritdoc/>
-        public sealed override IAsyncCursor<BsonDocument> ListDatabases(IClientSessionHandle session, CancellationToken cancellationToken = default(CancellationToken))
+        public sealed override IAsyncCursor<BsonDocument> ListDatabases(
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSession(session => ListDatabases(session, options, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public sealed override IAsyncCursor<BsonDocument> ListDatabases(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return ListDatabases(session, null, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public sealed override IAsyncCursor<BsonDocument> ListDatabases(
+            IClientSessionHandle session,
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             Ensure.IsNotNull(session, nameof(session));
+            options = options ?? new ListDatabasesOptions();
             var messageEncoderSettings = GetMessageEncoderSettings();
-            var operation = new ListDatabasesOperation(messageEncoderSettings);
+            var operation = CreateListDatabaseOperation(options, messageEncoderSettings);
             return ExecuteReadOperation(session, operation, cancellationToken);
         }
 
         /// <inheritdoc/>
-        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(CancellationToken cancellationToken = default(CancellationToken))
+        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            CancellationToken cancellationToken = default(CancellationToken))
         {
-            return UsingImplicitSessionAsync(session => ListDatabasesAsync(session, cancellationToken), cancellationToken);
+            return UsingImplicitSessionAsync(session => ListDatabasesAsync(session, null, cancellationToken), cancellationToken);
         }
 
         /// <inheritdoc/>
-        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(IClientSessionHandle session, CancellationToken cancellationToken = default(CancellationToken))
+        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSessionAsync(session => ListDatabasesAsync(session, options, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            IClientSessionHandle session,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return ListDatabasesAsync(session, null, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public sealed override Task<IAsyncCursor<BsonDocument>> ListDatabasesAsync(
+            IClientSessionHandle session,
+            ListDatabasesOptions options,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             Ensure.IsNotNull(session, nameof(session));
+            options = options ?? new ListDatabasesOptions();
             var messageEncoderSettings = GetMessageEncoderSettings();
-            var operation = new ListDatabasesOperation(messageEncoderSettings);
+            var operation = CreateListDatabaseOperation(options, messageEncoderSettings);
             return ExecuteReadOperationAsync(session, operation, cancellationToken);
         }
 
@@ -239,6 +347,50 @@ namespace MongoDB.Driver
         }
 
         /// <inheritdoc/>
+        public override IChangeStreamCursor<TResult> Watch<TResult>(
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSession(session => Watch(session, pipeline, options, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public override IChangeStreamCursor<TResult> Watch<TResult>(
+            IClientSessionHandle session,
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            Ensure.IsNotNull(session, nameof(session));
+            Ensure.IsNotNull(pipeline, nameof(pipeline));
+            var operation = CreateChangeStreamOperation(pipeline, options);
+            return ExecuteReadOperation(session, operation, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public override Task<IChangeStreamCursor<TResult>> WatchAsync<TResult>(
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            return UsingImplicitSessionAsync(session => WatchAsync(session, pipeline, options, cancellationToken), cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public override Task<IChangeStreamCursor<TResult>> WatchAsync<TResult>(
+            IClientSessionHandle session,
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            Ensure.IsNotNull(session, nameof(session));
+            Ensure.IsNotNull(pipeline, nameof(pipeline));
+            var operation = CreateChangeStreamOperation(pipeline, options);
+            return ExecuteReadOperationAsync(session, operation, cancellationToken);
+        }
+
+        /// <inheritdoc/>
         public override IMongoClient WithReadConcern(ReadConcern readConcern)
         {
             Ensure.IsNotNull(readConcern, nameof(readConcern));
@@ -266,11 +418,6 @@ namespace MongoDB.Driver
         }
 
         // private methods
-        private IServerSession AcquireServerSession()
-        {
-            return _serverSessionPool.AcquireSession();
-        }
-
         private bool AreSessionsSupported(CancellationToken cancellationToken)
         {
             return AreSessionsSupported(_cluster.Description) ?? AreSessionsSupportedAfterServerSelection(cancellationToken);
@@ -315,9 +462,58 @@ namespace MongoDB.Driver
             return AreSessionsSupported(selector.ClusterDescription) ?? false;
         }
 
+        private IAsyncCursor<string> CreateDatabaseNamesCursor(IAsyncCursor<BsonDocument> cursor)
+        {
+            return new BatchTransformingAsyncCursor<BsonDocument, string>(
+                cursor,
+                databases => databases.Select(database => database["name"].AsString));
+        }
+
+        private ListDatabasesOperation CreateListDatabaseOperation(
+            ListDatabasesOptions options,
+            MessageEncoderSettings messageEncoderSettings)
+        {
+            return new ListDatabasesOperation(messageEncoderSettings)
+            {
+                Filter = options.Filter?.Render(BsonDocumentSerializer.Instance, BsonSerializer.SerializerRegistry),
+                NameOnly = options.NameOnly,
+                RetryRequested = _settings.RetryReads
+            };
+        }
+
+        private IReadBindingHandle CreateReadBinding(IClientSessionHandle session)
+        {
+            var readPreference = _settings.ReadPreference;
+            if (session.IsInTransaction && readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary)
+            {
+                throw new InvalidOperationException("Read preference in a transaction must be primary.");
+            }
+
+            var binding = new ReadPreferenceBinding(_cluster, readPreference, session.WrappedCoreSession.Fork());
+            return new ReadBindingHandle(binding);
+        }
+
+        private IReadWriteBindingHandle CreateReadWriteBinding(IClientSessionHandle session)
+        {
+            var binding = new WritableServerBinding(_cluster, session.WrappedCoreSession.Fork());
+            return new ReadWriteBindingHandle(binding);
+        }
+
+        private ChangeStreamOperation<TResult> CreateChangeStreamOperation<TResult>(
+            PipelineDefinition<ChangeStreamDocument<BsonDocument>, TResult> pipeline,
+            ChangeStreamOptions options)
+        {
+            return ChangeStreamHelper.CreateChangeStreamOperation(
+                pipeline,
+                options,
+                _settings.ReadConcern,
+                GetMessageEncoderSettings(),
+                _settings.RetryReads);
+        }
+
         private TResult ExecuteReadOperation<TResult>(IClientSessionHandle session, IReadOperation<TResult> operation, CancellationToken cancellationToken = default(CancellationToken))
         {
-            using (var binding = new ReadPreferenceBinding(_cluster, _settings.ReadPreference, session.ToCoreSession()))
+            using (var binding = CreateReadBinding(session))
             {
                 return _operationExecutor.ExecuteReadOperation(binding, operation, cancellationToken);
             }
@@ -325,7 +521,7 @@ namespace MongoDB.Driver
 
         private async Task<TResult> ExecuteReadOperationAsync<TResult>(IClientSessionHandle session, IReadOperation<TResult> operation, CancellationToken cancellationToken = default(CancellationToken))
         {
-            using (var binding = new ReadPreferenceBinding(_cluster, _settings.ReadPreference, session.ToCoreSession()))
+            using (var binding = CreateReadBinding(session))
             {
                 return await _operationExecutor.ExecuteReadOperationAsync(binding, operation, cancellationToken).ConfigureAwait(false);
             }
@@ -333,7 +529,7 @@ namespace MongoDB.Driver
 
         private TResult ExecuteWriteOperation<TResult>(IClientSessionHandle session, IWriteOperation<TResult> operation, CancellationToken cancellationToken = default(CancellationToken))
         {
-            using (var binding = new WritableServerBinding(_cluster, session.ToCoreSession()))
+            using (var binding = CreateReadWriteBinding(session))
             {
                 return _operationExecutor.ExecuteWriteOperation(binding, operation, cancellationToken);
             }
@@ -341,7 +537,7 @@ namespace MongoDB.Driver
 
         private async Task<TResult> ExecuteWriteOperationAsync<TResult>(IClientSessionHandle session, IWriteOperation<TResult> operation, CancellationToken cancellationToken = default(CancellationToken))
         {
-            using (var binding = new WritableServerBinding(_cluster, session.ToCoreSession()))
+            using (var binding = CreateReadWriteBinding(session))
             {
                 return await _operationExecutor.ExecuteWriteOperationAsync(binding, operation, cancellationToken).ConfigureAwait(false);
             }
@@ -349,33 +545,36 @@ namespace MongoDB.Driver
 
         private MessageEncoderSettings GetMessageEncoderSettings()
         {
-            return new MessageEncoderSettings
+            var messageEncoderSettings = new MessageEncoderSettings
             {
                 { MessageEncoderSettingsName.GuidRepresentation, _settings.GuidRepresentation },
                 { MessageEncoderSettingsName.ReadEncoding, _settings.ReadEncoding ?? Utf8Encodings.Strict },
                 { MessageEncoderSettingsName.WriteEncoding, _settings.WriteEncoding ?? Utf8Encodings.Strict }
             };
+
+            ConfigureAutoEncryptionMessageEncoderSettings(messageEncoderSettings);
+
+            return messageEncoderSettings;
         }
 
         private IClientSessionHandle StartImplicitSession(bool areSessionsSupported)
         {
-            var options = new ClientSessionOptions();
+            var options = new ClientSessionOptions { CausalConsistency = false };
 
-            IServerSession serverSession;
+            ICoreSessionHandle coreSession;
 #pragma warning disable 618
             var areMultipleUsersAuthenticated = _settings.Credentials.Count() > 1;
 #pragma warning restore
             if (areSessionsSupported && !areMultipleUsersAuthenticated)
             {
-                serverSession = AcquireServerSession();
+                coreSession = _cluster.StartSession(options.ToCore(isImplicit: true));
             }
             else
             {
-                serverSession = NoServerSession.Instance;
+                coreSession = NoCoreSession.NewHandle();
             }
 
-            var session = new ClientSession(this, options, serverSession, isImplicit: true);
-            return new ClientSessionHandle(session);
+            return new ClientSessionHandle(this, options, coreSession);
         }
 
         private IClientSessionHandle StartSession(ClientSessionOptions options, bool areSessionsSupported)
@@ -384,11 +583,11 @@ namespace MongoDB.Driver
             {
                 throw new NotSupportedException("Sessions are not supported by this version of the server.");
             }
+
             options = options ?? new ClientSessionOptions();
-            var serverSession = AcquireServerSession();
-            var session = new ClientSession(this, options, serverSession, isImplicit: false);
-            var handle = new ClientSessionHandle(session);
-            return handle;
+            var coreSession = _cluster.StartSession(options.ToCore());
+
+            return new ClientSessionHandle(this, options, coreSession);
         }
 
         private void UsingImplicitSession(Action<IClientSessionHandle> func, CancellationToken cancellationToken)

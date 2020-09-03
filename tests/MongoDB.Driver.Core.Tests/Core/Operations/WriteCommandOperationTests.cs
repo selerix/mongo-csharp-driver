@@ -66,7 +66,6 @@ namespace MongoDB.Driver.Core.Operations
             var channelSource = CreateMockChannelSource(serverDescription, mockChannel.Object).Object;
             var binding = CreateMockWriteBinding(channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
-            var slaveOk = false;
 
             BsonDocument result;
             if (async)
@@ -79,10 +78,11 @@ namespace MongoDB.Driver.Core.Operations
                         ReadPreference.Primary,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         null, // additionalOptions
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -98,10 +98,11 @@ namespace MongoDB.Driver.Core.Operations
                         ReadPreference.Primary,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         null, // additionalOptions
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -122,7 +123,6 @@ namespace MongoDB.Driver.Core.Operations
             var binding = CreateMockWriteBinding(channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
             var command = BsonDocument.Parse("{ command : 1 }");
-            var slaveOk = false;
 
             BsonDocument result;
             if (async)
@@ -135,10 +135,11 @@ namespace MongoDB.Driver.Core.Operations
                         It.IsAny<ReadPreference>(),
                         subject.DatabaseNamespace,
                         command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         subject.AdditionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -154,10 +155,11 @@ namespace MongoDB.Driver.Core.Operations
                         It.IsAny<ReadPreference>(),
                         subject.DatabaseNamespace,
                         command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         subject.AdditionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -178,7 +180,6 @@ namespace MongoDB.Driver.Core.Operations
             var binding = CreateMockWriteBinding(channelSource).Object;
             var cancellationToken = new CancellationTokenSource().Token;
             var additionalOptions = BsonDocument.Parse("{ $comment : \"comment\" }");
-            var slaveOk = false;
 
             BsonDocument result;
             if (async)
@@ -191,10 +192,11 @@ namespace MongoDB.Driver.Core.Operations
                         ReadPreference.Primary,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),
@@ -210,10 +212,11 @@ namespace MongoDB.Driver.Core.Operations
                         ReadPreference.Primary,
                         subject.DatabaseNamespace,
                         subject.Command,
+                        null, // commandPayloads
                         subject.CommandValidator,
                         additionalOptions,
-                        It.Is<Func<CommandResponseHandling>>(f => f() == CommandResponseHandling.Return),
-                        slaveOk,
+                        null, // postWriteAction
+                        CommandResponseHandling.Return,
                         subject.ResultSerializer,
                         subject.MessageEncoderSettings,
                         cancellationToken),

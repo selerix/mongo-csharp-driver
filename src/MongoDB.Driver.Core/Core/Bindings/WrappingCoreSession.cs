@@ -14,6 +14,8 @@
 */
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using MongoDB.Bson;
 using MongoDB.Driver.Core.Misc;
 
@@ -54,12 +56,32 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public virtual CoreTransaction CurrentTransaction
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.CurrentTransaction;
+            }
+        }
+
+        /// <inheritdoc />
         public virtual BsonDocument Id
         {
             get
             {
                 ThrowIfDisposed();
                 return _wrapped.Id;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual bool IsDirty
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.IsDirty;
             }
         }
 
@@ -84,12 +106,42 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public virtual bool IsInTransaction
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.IsInTransaction;
+            }
+        }
+
+        /// <inheritdoc />
         public virtual BsonTimestamp OperationTime
         {
             get
             {
                 ThrowIfDisposed();
                 return _wrapped.OperationTime;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual CoreSessionOptions Options
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.Options;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual ICoreServerSession ServerSession
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return _wrapped.ServerSession;
             }
         }
 
@@ -109,6 +161,27 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         // public methods
+        /// <inheritdoc />
+        public virtual void AbortTransaction(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            ThrowIfDisposed();
+            _wrapped.AbortTransaction(cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual Task AbortTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            ThrowIfDisposed();
+            return _wrapped.AbortTransactionAsync(cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual void AboutToSendCommand()
+        {
+            ThrowIfDisposed();
+            _wrapped.AboutToSendCommand();
+        }
+
         /// <inheritdoc />
         public virtual void AdvanceClusterTime(BsonDocument newClusterTime)
         {
@@ -130,10 +203,38 @@ namespace MongoDB.Driver.Core.Bindings
         }
 
         /// <inheritdoc />
+        public virtual void CommitTransaction(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            ThrowIfDisposed();
+            _wrapped.CommitTransaction(cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public virtual Task CommitTransactionAsync(CancellationToken cancellationToken = default(CancellationToken))
+        {
+            ThrowIfDisposed();
+            return _wrapped.CommitTransactionAsync(cancellationToken);
+        }
+
+        /// <inheritdoc />
         public void Dispose()
         {
             Dispose(true);
             GC.SuppressFinalize(this);
+        }
+
+        /// <inheritdoc />
+        public virtual void MarkDirty()
+        {
+            ThrowIfDisposed();
+            _wrapped.MarkDirty();
+        }
+
+        /// <inheritdoc />
+        public virtual void StartTransaction(TransactionOptions transactionOptions = null)
+        {
+            ThrowIfDisposed();
+            _wrapped.StartTransaction(transactionOptions);
         }
 
         /// <inheritdoc />

@@ -13,7 +13,6 @@
 * limitations under the License.
 */
 
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MongoDB.Bson;
@@ -21,7 +20,6 @@ using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver.Core.Bindings;
 using MongoDB.Driver.Core.Misc;
-using MongoDB.Driver.Core.Servers;
 using MongoDB.Driver.Core.WireProtocol;
 using MongoDB.Driver.Core.WireProtocol.Messages.Encoders;
 
@@ -144,9 +142,18 @@ namespace MongoDB.Driver.Core.Operations
         }
 
         // methods
-        private TCommandResult ExecuteProtocol(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
+        /// <summary>
+        /// Executes the protocol.
+        /// </summary>
+        /// <param name="channel">The channel.</param>
+        /// <param name="session">The session.</param>
+        /// <param name="readPreference">The read preference.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// A Task whose result is the command result.
+        /// </returns>
+        protected TCommandResult ExecuteProtocol(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
         {
-            var slaveOk = readPreference != null && readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary;
             var additionalOptions = GetEffectiveAdditionalOptions();
 
             return channel.Command(
@@ -154,10 +161,11 @@ namespace MongoDB.Driver.Core.Operations
                 readPreference,
                 _databaseNamespace,
                 _command,
+                null, // commandPayloads
                 _commandValidator,
                 additionalOptions,
-                () => CommandResponseHandling.Return,
-                slaveOk,
+                null, // postWriteAction,
+                CommandResponseHandling.Return,
                 _resultSerializer,
                 _messageEncoderSettings,
                 cancellationToken);
@@ -185,9 +193,18 @@ namespace MongoDB.Driver.Core.Operations
             }
         }
 
-        private Task<TCommandResult> ExecuteProtocolAsync(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
+        /// <summary>
+        /// Executes the protocol.
+        /// </summary>
+        /// <param name="channel">The channel.</param>
+        /// <param name="session">The session.</param>
+        /// <param name="readPreference">The read preference.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>
+        /// A Task whose result is the command result.
+        /// </returns>
+        protected Task<TCommandResult> ExecuteProtocolAsync(IChannelHandle channel, ICoreSessionHandle session, ReadPreference readPreference, CancellationToken cancellationToken)
         {
-            var slaveOk = readPreference != null && readPreference.ReadPreferenceMode != ReadPreferenceMode.Primary;
             var additionalOptions = GetEffectiveAdditionalOptions();
 
             return channel.CommandAsync(
@@ -195,10 +212,11 @@ namespace MongoDB.Driver.Core.Operations
                 readPreference,
                 _databaseNamespace,
                 _command,
+                null, // TODO: support commandPayloads
                 _commandValidator,
                 additionalOptions,
-                () => CommandResponseHandling.Return,
-                slaveOk,
+                null, // postWriteAction,
+                CommandResponseHandling.Return,
                 _resultSerializer,
                 _messageEncoderSettings,
                 cancellationToken);
